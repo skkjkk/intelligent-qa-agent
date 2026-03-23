@@ -16,6 +16,13 @@ public class AgentApplication {
 
     public static void main(String[] args) {
         SpringApplication.run(AgentApplication.class, args);
+        System.out.println("╔════════════════════════════════════════════════════╗");
+        System.out.println("║                                                    ║");
+        System.out.println("║          🚀  Intelligent QA Agent  🚀             ║");
+        System.out.println("║                                                    ║");
+        System.out.println("║            Starting up...                          ║");
+        System.out.println("║                                                    ║");
+        System.out.println("╚════════════════════════════════════════════════════╝");
         System.out.println("智能问答Agent系统启动成功！");
         System.out.println("Swagger UI: http://localhost:8080/swagger-ui.html");
     }

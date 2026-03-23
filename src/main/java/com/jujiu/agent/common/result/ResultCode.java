@@ -86,7 +86,22 @@ public enum ResultCode {
      * 会话不存在或无权限
      */
     SESSION_NOT_FOUND(2001, "会话不存在或无权限"),
+
     
+    /**
+     * DeepSeek API 返回空结果
+     */
+    DEEPSEEK_API_RETURN_NULL(3001, "DeepSeek API 返回空结果"),
+
+    /**
+     * DeepSeek API 响应消息格式异常
+     */
+    DEEPSEEK_API_RETURN_FORMAT_ERROR(3002, "DeepSeek API 返回的消息格式异常"),
+
+    /**
+     * 发送消息过于频繁，请稍后再试
+     */
+    CHAT_RATE_LIMIT_EXCEEDED(3003, "发送消息过于频繁，请稍后再试"),
     /**
      * 服务器内部错误
      */

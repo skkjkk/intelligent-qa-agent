@@ -3,8 +3,11 @@ package com.jujiu.agent.service.impl;
 import cn.hutool.core.util.IdUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.jujiu.agent.client.DeepSeekClient;
 import com.jujiu.agent.common.exception.BusinessException;
 import com.jujiu.agent.common.result.ResultCode;
+import com.jujiu.agent.config.DeepSeekProperties;
+import com.jujiu.agent.model.dto.deepseek.DeepSeekMessage;
 import com.jujiu.agent.model.dto.request.CreateSessionRequest;
 import com.jujiu.agent.model.dto.request.SendMessageRequest;
 import com.jujiu.agent.model.dto.response.ChatResponse;
@@ -17,11 +20,12 @@ import com.jujiu.agent.repository.SessionRepository;
 import com.jujiu.agent.service.ChatService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
 import java.util.List;
-import java.util.stream.Collectors;
+import java.util.concurrent.TimeUnit;
 
 /**
  * @author 17644
@@ -38,7 +42,14 @@ public class ChatServiceImpl implements ChatService {
     @Autowired
     private SessionRepository sessionRepository;
     
-    //TODO 后面集成 DeepSeek 时再注入
+    @Autowired
+    private DeepSeekClient deepSeekClient;
+    
+    @Autowired
+    private DeepSeekProperties deepSeekProperties;
+
+    @Autowired
+    private StringRedisTemplate redisTemplate;
 
     /**
      * 生成会话ID：session_ + 雪花ID
@@ -167,6 +178,8 @@ public class ChatServiceImpl implements ChatService {
             log.error("会话不存在或无权限访问");
             throw new BusinessException(ResultCode.SESSION_NOT_FOUND);
         }
+        // 限流检查
+        checkRateLimit(userId);
         
         // 2. 保存用户信息
         Message message = Message.builder()
@@ -178,9 +191,29 @@ public class ChatServiceImpl implements ChatService {
                 .build();
         messageRepository.insert(message);
         
-        // 3. 调用 DeepSeek
-        //TODO 调用 DeepSeek
-        String aiReply = "这是模拟回复，DeepSeek 集成后替换。你说的是：" + request.getMessage();
+        // 如果是第一条消息，自动生成标题
+        if (session.getMessageCount() == 0) {
+            String title = generateTitle(request.getMessage());
+            session.setTitle(title);
+        }
+        
+        // 3. 构建多轮上下文，调用DeepSeek
+        // 3.1 查询该会话最近N条消息，并按时间升序
+        List<Message> historyMessages = messageRepository.selectList(
+                new LambdaQueryWrapper<Message>()
+                        .eq(Message::getSessionId, request.getSessionId())
+                        .orderByAsc(Message::getCreatedAt)
+                        .last("limit " + deepSeekProperties.getMaxContextMessages())
+        );
+        // 3.2 转换为 DeepSeekMessage 列表
+        List<DeepSeekMessage> deepSeekMessages = historyMessages.stream()
+                .map(msg -> new DeepSeekMessage(
+                        msg.getRole(),
+                        msg.getContent()
+                )).toList();
+
+        // 3.3 调用DeepSeek获取真实回复
+        String aiReply = deepSeekClient.chat(deepSeekMessages);
         
         // 4. 保存 AI 回复
         Message aiMessage = Message.builder()
@@ -235,5 +268,37 @@ public class ChatServiceImpl implements ChatService {
                 .createdAt(session.getCreatedAt())
                 .updatedAt(session.getUpdatedAt())
                 .build();
+    }
+    
+    /**
+     * 使用 AI 生成会话标题
+     *
+     * @param title 用户输入的原始问题或内容
+     * @return 生成的会话标题（不超过 10 个字）
+     */
+    private String generateTitle(String title){
+        // 构建请求 AI 生成标题的消息
+        DeepSeekMessage deepSeekMessage = new DeepSeekMessage();
+        deepSeekMessage.setRole("user");
+        deepSeekMessage.setContent("请根据以下问题，生成一个简短的会话标题，不超过 10 个字，只返回标题本身：" + title);
+        // 调用 DeepSeek API 生成标题
+        return deepSeekClient.chat(List.of(deepSeekMessage));
+    }
+    
+    private void checkRateLimit(Long userId) {
+        String key = "chat:rate:" + userId;
+
+        Long count = redisTemplate.opsForValue().increment(key);
+        
+        // 第一次：设置60秒过期
+        if (count != null && count == 1) {
+            redisTemplate.expire(key, 60, TimeUnit.SECONDS);
+        }
+        
+        if (count != null && count >= deepSeekProperties.getMaxMessagesPerMinute()) {
+            log.error("用户 {} 创建会话频率过高", userId);
+            throw new BusinessException(ResultCode.CHAT_RATE_LIMIT_EXCEEDED);
+        }
+        
     }
 }

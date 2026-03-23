@@ -45,3 +45,18 @@ jwt:
   # JWT签名密钥：优先读取环境变量 JWT_SECRET；若未设置则使用默认值（仅建议本地开发使用）
   # HS256 的 key 不要太短，否则可能报错（InvalidKeyException / WeakKeyException）
   secret: ${JWT_SECRET:dev-secret-change-me-dev-secret-change-me}
+  
+deepseek:
+  # DeepSeek API Key ：优先读取环境变量 DEEPSEEK_API_KEY；若未设置则使用默认值（仅建议本地开发使用）
+  api-key: ${DEEPSEEK_API_KEY:dev-api-key-change-me-dev-api-key-change-me}
+  # API 寄出地址
+  base-url: https://api.deepseek.com
+  # 模型名称
+  model: deepseek-chat
+  # 多轮对话最多携带的历史消息条数（太多会增加 token 消耗）
+  max-context-messages: 10
+  # 限流配置
+  rate-limit:
+    # 每个用户每分钟最多发送消息数
+    max-messages-per-minute:10
+  
