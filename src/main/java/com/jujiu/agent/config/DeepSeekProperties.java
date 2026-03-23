@@ -60,4 +60,12 @@ public class DeepSeekProperties {
      * 示例：你是一个乐于助人、知识渊博且诚实的智能助手。你的目标是为用户提供准确、清晰、有用的解答。
      */
     private String systemPrompt;
+
+    /**
+     * 温度参数，控制回复的随机性
+     * 范围：0.0 - 2.0
+     * 越低越确定（适合代码、数学），越高越创意（适合写作、头脑风暴）
+     * 默认：0.7
+     */
+    private Double temperature = 0.7;
 }

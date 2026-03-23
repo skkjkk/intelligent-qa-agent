@@ -1,5 +1,6 @@
 package com.jujiu.agent.model.dto.request;
 
+import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Pattern;
 import lombok.Data;
@@ -11,6 +12,7 @@ import lombok.Data;
  * @since 2026/3/22 9:14
  */
 @Data
+@Schema(description = "修改密码请求参数", title = "修改密码请求参数")
 public class ChangePasswordRequest {
     @NotBlank(message = "旧密码不能为空")
     private String oldPassword;

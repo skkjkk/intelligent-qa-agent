@@ -3,6 +3,7 @@ package com.jujiu.agent.security;
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.security.Keys;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -38,6 +39,7 @@ import java.util.Date;
  * @version 1.0.0
  * @since 2026/3/20 17:53
  */
+@Slf4j
 @Component
 public class JwtTokenProvider {
     
@@ -84,7 +86,13 @@ public class JwtTokenProvider {
     private String generateToken(Long userId, String username, String role, long expiration) {
         Date now = new Date();
         Date expiry = new Date(now.getTime() + expiration);
-        return Jwts.builder()
+            
+        log.info("[JWT][TOKEN_GENERATION] 开始生成 Token - userId={}, username={}, role={}, tokenType={}, 过期时间={}ms, 过期时刻={}", 
+                userId, username, role, 
+                expiration == ACCESS_TOKEN_EXPIRATION_MS ? "ACCESS" : "REFRESH",
+                expiration, expiry);
+            
+        String token = Jwts.builder()
                 // 令牌签发时间
                 .issuedAt(now)
                 // 令牌过期时间
@@ -99,6 +107,11 @@ public class JwtTokenProvider {
                 .signWith(getSecretKey(), Jwts.SIG.HS256)
                 // 生成 JWT 令牌字符串构建并返回令牌，
                 .compact();
+            
+        log.info("[JWT][TOKEN_GENERATED] Token 生成成功 - userId={}, username={}, tokenPrefix={}", 
+                userId, username, token != null && token.length() > 10 ? token.substring(0, 10) + "..." : "unknown");
+            
+        return token;
     }
 
     /**
@@ -151,40 +164,53 @@ public class JwtTokenProvider {
      * @return 如果令牌有效返回 true，否则返回 false
      */
     public boolean validateToken(String token) {
-
+        log.debug("[JWT][TOKEN_VALIDATION] 开始验证 Token - tokenPrefix={}", 
+                token != null && token.length() > 10 ? token.substring(0, 10) + "..." : "null");
+    
         // 1. 检查是否在黑名单
         String blacklistKey = "token:blacklist:" + token;
         if (redisTemplate.hasKey(blacklistKey)) {
-            // 已被登出
+            log.warn("[JWT][TOKEN_VALIDATION] Token 已在黑名单中 (用户主动退出) - tokenPrefix={}", 
+                    token != null && token.length() > 10 ? token.substring(0, 10) + "..." : "null");
             return false;  
         }
-        
+            
         // 首先检查令牌是否为空
         if (token == null || token.trim().isEmpty()) {
+            log.warn("[JWT][TOKEN_VALIDATION] Token 为空");
             return false;
         }
-
+    
         // 2. 【新增】检查用户是否被全局拉黑（修改密码时用）
         try {
             Long userId = getUserId(token);
             String userBlacklistKey = "user:logout:" + userId;
             if (Boolean.TRUE.equals(redisTemplate.hasKey(userBlacklistKey))) {
-                // 该用户已修改密码，所有token失效
+                log.warn("[JWT][TOKEN_VALIDATION] Token 已失效 (用户已修改密码) - userId={}, tokenPrefix={}", 
+                        userId, token.substring(0, 10) + "...");
                 return false; 
             }
         } catch (Exception e) {
+            log.debug("[JWT][TOKEN_VALIDATION] 无法提取用户 ID，可能 Token 格式错误");
             return false;
         }
-        
+            
         try {
             Claims claims = parseClaims(token);
             // 检查过期时间（parseClaims 已经验证签名，这里额外检查是否过期）
             Date expiration = claims.getExpiration();
             if (expiration != null && expiration.before(new Date())) {
+                log.warn("[JWT][TOKEN_VALIDATION] Token 已过期 - expiration={}", expiration);
                 return false;
             }
+                
+            Long userId = getUserId(token);
+            String username = getUsername(token);
+            log.debug("[JWT][TOKEN_VALIDATION] Token 验证通过 - userId={}, username={}", userId, username);
             return true;
         } catch (Exception e) {
+            log.error("[JWT][TOKEN_VALIDATION] Token 验证异常 - reason={}, tokenPrefix={}", 
+                    e.getMessage(), token != null && token.length() > 10 ? token.substring(0, 10) + "..." : "null");
             return false;
         }
     }

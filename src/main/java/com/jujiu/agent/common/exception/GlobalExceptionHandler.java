@@ -37,6 +37,8 @@ public class GlobalExceptionHandler {
         // 获取错误信息
         FieldError defaultMessage = e.getBindingResult().getFieldError();
         String message = defaultMessage != null ? defaultMessage.getDefaultMessage() : "参数错误";
+        log.warn("[EXCEPTION][VALIDATION] 参数验证失败 - field={}, reason={}, errorCode=400", 
+                defaultMessage != null ? defaultMessage.getField() : "unknown", message);
         return Result.fail(400, message);
     }
 
@@ -48,6 +50,8 @@ public class GlobalExceptionHandler {
      */
     @ExceptionHandler(BusinessException.class)
     public Result handleBusinessException(BusinessException e) {
+        log.warn("[EXCEPTION][BUSINESS] 业务异常 - message={}, errorCode={}, errorMessage={}", 
+                e.getMessage(), e.getResultCode().getCode(), e.getResultCode().getMessage());
         return Result.fail(e.getResultCode());
     }
 
@@ -59,7 +63,8 @@ public class GlobalExceptionHandler {
      */
     @ExceptionHandler(Exception.class)
     public Result handleException(Exception e) {
-        log.error("系统异常", e);
+        log.error("[EXCEPTION][SYSTEM] 系统异常 - type={}, message={}, stackTrace={}", 
+                e.getClass().getSimpleName(), e.getMessage(), e.getStackTrace()[0]);
         return Result.fail(ResultCode.INTERNAL_ERROR);
     }
 
@@ -71,6 +76,7 @@ public class GlobalExceptionHandler {
      */
     @ExceptionHandler(AccessDeniedException.class)
     public Result handleAccessException(AccessDeniedException e) {
+        log.warn("[EXCEPTION][ACCESS_DENIED] 访问被拒绝 - message={}, errorCode=403", e.getMessage());
         return Result.fail(ResultCode.FORBIDDEN);
     }
     
@@ -82,6 +88,8 @@ public class GlobalExceptionHandler {
      */
     @ExceptionHandler(HttpRequestMethodNotSupportedException.class)
     public Result handleHttpRequestMethodNotSupportedException(HttpRequestMethodNotSupportedException e) {
+        log.warn("[EXCEPTION][METHOD_NOT_ALLOWED] 请求方法不支持 - method={}, message={}, errorCode=405", 
+                e.getMethod() != null ? e.getMethod() : "unknown", e.getMessage());
         return Result.fail(ResultCode.METHOD_NOT_ALLOWED);
     }
     

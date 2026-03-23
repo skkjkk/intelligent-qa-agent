@@ -5,6 +5,7 @@ import com.jujiu.agent.model.dto.request.SendMessageRequest;
 import com.jujiu.agent.model.dto.response.ChatResponse;
 import com.jujiu.agent.model.dto.response.SessionDetailResponse;
 import com.jujiu.agent.model.dto.response.SessionResponse;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.util.List;
 
@@ -52,4 +53,12 @@ public interface ChatService {
      * @param sessionId 会话ID
      */
     void deleteSession(Long userId, String sessionId);
+
+    /**
+     * 流式发送消息（AI回复以SSE流式返回）
+     * @param userId 当前用户ID
+     * @param request 发送消息请求
+     * @return SseEmitter 用于向客户端推送流式数据
+     */
+    SseEmitter sendMessageStream(Long userId, SendMessageRequest request);
 }

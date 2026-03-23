@@ -1,5 +1,6 @@
 package com.jujiu.agent.model.dto.request;
 
+import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
 import lombok.Data;
@@ -10,6 +11,7 @@ import lombok.Data;
  * @since 2026/3/22 10:45
  */
 @Data
+@Schema(description = "创建会话请求参数", title = "创建会话请求参数")
 public class CreateSessionRequest {
     /**
      * 会话标题

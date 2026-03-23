@@ -38,4 +38,20 @@ public class DeepSeekRequest {
      */
     @Schema(description = "对话消息列表", title = "多轮对话历史")
     private List<DeepSeekMessage> messages;
+    
+    /**
+     * 是否流式返回
+     * 是否边生成边返回
+     * 默认：false
+     */
+    @Schema(description = "是否流式返回", title = "边生成边返回", example = "false")
+    private Boolean stream;
+
+    /**
+     * 温度参数，控制回复的随机性
+     * 范围：0.0 - 2.0，默认 1.0
+     * 越低越确定，越高越创意
+     */
+    @Schema(description = "温度参数", title = "控制回复随机性", example = "0.7")
+    private Double temperature;
 }

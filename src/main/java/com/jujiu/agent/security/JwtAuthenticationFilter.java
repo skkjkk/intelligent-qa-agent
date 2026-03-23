@@ -41,27 +41,38 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
     public JwtAuthenticationFilter(JwtTokenProvider jwtTokenProvider) {
         this.jwtTokenProvider = jwtTokenProvider;
     }
-    
+
     /**
      * 过滤请求，执行 JWT 认证
      *
-     * @param request HTTP 请求对象
-     * @param response HTTP 响应对象
+     * @param request     HTTP 请求对象
+     * @param response    HTTP 响应对象
      * @param filterChain 过滤器链
      * @throws ServletException Servlet 异常
-     * @throws IOException IO 异常
+     * @throws IOException      IO 异常
      */
     @Override
-    protected void doFilterInternal(HttpServletRequest request, 
-                                    HttpServletResponse response, 
+    protected void doFilterInternal(HttpServletRequest request,
+                                    HttpServletResponse response,
                                     FilterChain filterChain) throws ServletException, IOException {
+        // 检查是否为异步 dispatch，如果是则直接放行
+        if (request.isAsyncStarted()) {
+            log.debug("[SECURITY][FILTER] 检测到异步请求，直接放行 - uri={}", request.getRequestURI());
+            filterChain.doFilter(request, response);
+            return;
+        }
+        
+        long startTime = System.currentTimeMillis();
+        log.info("[SECURITY][FILTER] 开始处理请求 - method={}, uri={}, ip={}",
+                request.getMethod(), request.getRequestURI(), request.getRemoteAddr());
+
         try {
             // 1. 从请求头中获取 JWT token
             String authorization = request.getHeader("Authorization");
 
             if (!StringUtils.hasText(authorization) || !authorization.startsWith("Bearer ")) {
                 // 如果没有携带 token，则直接放行
-                log.debug("未找到 Authorization 头，跳过认证");
+                log.debug("[SECURITY][FILTER] 未找到 Authorization 头，跳过认证 - uri={}", request.getRequestURI());
                 filterChain.doFilter(request, response);
                 return;
             }
@@ -91,13 +102,20 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                 // 7. 将认证信息设置到 SecurityContext 中
                 SecurityContextHolder.getContext().setAuthentication(authentication);
 
-                log.debug("JWT 认证成功 - 用户 ID: {}, 用户名：{}", userId, username);
+                log.info("[SECURITY][AUTH_SUCCESS] JWT 认证成功 - userId={}, username={}, role={}, uri={}, costTime={}ms",
+                        userId, username, role, request.getRequestURI(), System.currentTimeMillis() - startTime);
             } else {
-                log.warn("JWT Token 无效或已过期");
+                log.warn("[SECURITY][AUTH_FAILED] Token 无效或已过期 - uri={}", request.getRequestURI());
             }
         } catch (Exception e) {
-            log.error("JWT 认证失败：{}", e.getMessage(), e);
-            // 不在这里设置响应，让 Spring Security 的 ExceptionHandler 统一处理
+            log.error("[SECURITY][AUTH_ERROR] JWT 认证异常 - uri={}, error={}, costTime={}ms",
+                    request.getRequestURI(), e.getMessage(), System.currentTimeMillis() - startTime, e);
+            response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
+            response.setContentType("application/json;charset=UTF-8");
+            response.getWriter().write("{\"error\":\"Unauthorized\",\"message\":\"" + e.getMessage() + "\"}");
+        } finally {
+            log.info("[SECURITY][FILTER] 请求处理完成 - uri={}, totalCostTime={}ms",
+                    request.getRequestURI(), System.currentTimeMillis() - startTime);
         }
         // 8. 继续执行过滤器链
         filterChain.doFilter(request, response);

@@ -13,10 +13,13 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.MediaType;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
+import java.io.IOException;
 import java.util.List;
 
 /**
@@ -90,4 +93,30 @@ public class ChatController {
         chatService.deleteSession(userId, sessionId);
         return Result.success(null, "会话删除成功");
     }
+
+    @Operation(summary = "流式发送消息", description = "向指定会话发送消息，AI 以流式方式逐字回复")
+    @PostMapping(value = "/send/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    public SseEmitter sendMessageStream(@RequestBody @Valid SendMessageRequest request) {
+        try {
+            Long userId = getCurrentUserId();
+            log.info("[流式消息] 收到流式发送请求，userId={}, sessionId={}", userId, request.getSessionId());
+            SseEmitter emitter = chatService.sendMessageStream(userId, request);
+            log.debug("[流式消息] SSE 连接已建立，sessionId={}", request.getSessionId());
+            return emitter;
+        } catch (Exception e) {
+            log.error("[流式消息] 流式发送失败，错误：{}", e.getMessage(), e);
+            // 创建一个立即返回错误的 SseEmitter
+            SseEmitter errorEmitter = new SseEmitter();
+            try {
+                errorEmitter.send(SseEmitter.event()
+                        .name("error")
+                        .data("{" + "error" + ":" + "" + e.getMessage() + "" + "}"));
+                errorEmitter.complete();
+            } catch (IOException ex) {
+                // 忽略
+            }
+            return errorEmitter;
+        }
+    }
+    
 }
