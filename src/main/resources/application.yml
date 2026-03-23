@@ -1,0 +1,47 @@
+spring:
+  application:
+    name: intelligent-qa-agent
+
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    url: jdbc:mysql://localhost:3306/intelligent_qa_agent?useUnicode=true&characterEncoding=utf8&useSSL=false&serverTimezone=Asia/Shanghai
+    username: root
+    password: 123456
+
+  data:
+    redis:
+      host: localhost
+      port: 6379
+      password: 
+      database: 2
+      timeout: 3000ms
+
+mybatis-plus:
+  mapper-locations: classpath:mapper/*.xml
+  type-aliases-package: com.jujiu.agent.model
+  configuration:
+    map-underscore-to-camel-case: true
+    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
+
+logging:
+  level:
+    com.jujiu.agent.controller: DEBUG
+    com.jujiu.agent: INFO
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"
+
+server:
+  port: 8080
+
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+    tags-sorter: alpha
+    operations-sorter: alpha
+
+jwt:
+  # JWT签名密钥：优先读取环境变量 JWT_SECRET；若未设置则使用默认值（仅建议本地开发使用）
+  # HS256 的 key 不要太短，否则可能报错（InvalidKeyException / WeakKeyException）
+  secret: ${JWT_SECRET:dev-secret-change-me-dev-secret-change-me}
