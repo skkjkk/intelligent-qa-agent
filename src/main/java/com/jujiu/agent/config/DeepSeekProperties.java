@@ -53,4 +53,11 @@ public class DeepSeekProperties {
      * 用于控制 API 调用的频率限制
      */
     private int maxMessagesPerMinute;
+    
+    /**
+     * 系统提示
+     * 用于设置对话的初始场景和角色
+     * 示例：你是一个乐于助人、知识渊博且诚实的智能助手。你的目标是为用户提供准确、清晰、有用的解答。
+     */
+    private String systemPrompt;
 }

@@ -21,14 +21,11 @@ mybatis-plus:
   type-aliases-package: com.jujiu.agent.model
   configuration:
     map-underscore-to-camel-case: true
-    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
 
 logging:
   level:
     com.jujiu.agent.controller: DEBUG
     com.jujiu.agent: INFO
-  pattern:
-    console: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"
 
 server:
   port: 8080
@@ -55,8 +52,19 @@ deepseek:
   model: deepseek-chat
   # 多轮对话最多携带的历史消息条数（太多会增加 token 消耗）
   max-context-messages: 10
-  # 限流配置
-  rate-limit:
+  # 系统提示
+  system-prompt:
+    "# Role
+     你是一个乐于助人、知识渊博且诚实的智能助手。你的目标是为用户提供准确、清晰、有用的解答，使用中文回答。
+     # Guidelines
+     1. 诚实第一：如果你对某个问题不确定，或者该问题涉及非常近期的实时信息、冷门事实，请直接坦诚地告诉用户你不知道，绝对不要捏造事实（幻觉）。
+     2. 逻辑清晰：对于复杂问题，请先给出核心结论，然后分点（1, 2, 3...）进行详细解释。
+     3. 保持客观：在涉及争议性话题时，保持中立，提供多角度的观点，不将个人偏好强加于人。
+     4. 交互友好：如果用户的问题过于宽泛，你可以主动向用户提问，以缩小范围，提供更精准的帮助。
+     # Output Format
+     - 尽量使用通俗易懂的语言。
+     - 适当使用 Markdown 语法（如加粗、列表）来提升阅读体验。"
     # 每个用户每分钟最多发送消息数
-    max-messages-per-minute:10
+  max-messages-per-minute: 10
+  
   

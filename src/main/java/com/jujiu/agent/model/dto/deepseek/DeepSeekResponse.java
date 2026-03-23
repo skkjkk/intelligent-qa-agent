@@ -28,6 +28,13 @@ public class DeepSeekResponse {
     private List<Choice> choices;
     
     /**
+     * 使用情况
+     * 包含提示词令牌数和总令牌数
+     */
+    @Schema(description = "使用情况", title = "Token 使用统计")
+    private Usage usage;
+    
+    /**
      * 选择结果内部类
      * 封装单个 AI 回复的详细信息
      */
@@ -50,6 +57,32 @@ public class DeepSeekResponse {
         @Schema(description = "完成原因", title = "生成结束原因", example = "stop")
         @JsonProperty("finish_reason")
         private String finishReason;
+    }
+    
+    @Data
+    public static class Usage{
+        /**
+         * 使用情况
+         * 包含提示词令牌数和总令牌数
+         */
+        @Schema(description = "使用情况", title = "Token 使用统计")
+        @JsonProperty("prompt_tokens")
+        private int promptTokens;
+        /**
+         * 提示词令牌数
+         * 包含生成的提示词的令牌数
+         */
+
+        @JsonProperty("completion_tokens")
+        @Schema(description = "提示词令牌数", title = "Prompt Token 数")
+        private int completionTokens;
+        /**
+         * 总令牌数
+         * 包含提示词和生成内容的令牌数
+         */
+        @JsonProperty("total_tokens")
+        @Schema(description = "总令牌数", title = "Total Token 数")
+        private int totalTokens;
         
     }
 }

@@ -4,6 +4,7 @@ import cn.hutool.core.util.IdUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.jujiu.agent.client.DeepSeekClient;
+import com.jujiu.agent.client.DeepSeekResult;
 import com.jujiu.agent.common.exception.BusinessException;
 import com.jujiu.agent.common.result.ResultCode;
 import com.jujiu.agent.config.DeepSeekProperties;
@@ -24,6 +25,7 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 
@@ -206,14 +208,25 @@ public class ChatServiceImpl implements ChatService {
                         .last("limit " + deepSeekProperties.getMaxContextMessages())
         );
         // 3.2 转换为 DeepSeekMessage 列表
-        List<DeepSeekMessage> deepSeekMessages = historyMessages.stream()
+        List<DeepSeekMessage> deepSeekMessages = new ArrayList<>(historyMessages.stream()
                 .map(msg -> new DeepSeekMessage(
                         msg.getRole(),
                         msg.getContent()
-                )).toList();
+                )).toList());
+        
+        // 3.3 在列表最前面插入 system 消息
+        deepSeekMessages.add(0, new DeepSeekMessage("system",
+                deepSeekProperties.getSystemPrompt())
+        );
+        
+        // 3.4 调用 DeepSeek 获取回复
+        DeepSeekResult result = deepSeekClient.chat(deepSeekMessages);
+        String aiReply = result.getReply();
+        log.info("本次对话使用的token: {}", result.getTotalTokens());
 
-        // 3.3 调用DeepSeek获取真实回复
-        String aiReply = deepSeekClient.chat(deepSeekMessages);
+        // 回填用户消息的 token
+        message.setTokens(result.getPromptTokens());
+        messageRepository.updateById(message);
         
         // 4. 保存 AI 回复
         Message aiMessage = Message.builder()
@@ -222,6 +235,7 @@ public class ChatServiceImpl implements ChatService {
                 .role("assistant")
                 .content(aiReply)
                 .createdAt(LocalDateTime.now())
+                .tokens(result.getCompletionTokens())
                 .build();
         messageRepository.insert(aiMessage);
         
@@ -282,7 +296,8 @@ public class ChatServiceImpl implements ChatService {
         deepSeekMessage.setRole("user");
         deepSeekMessage.setContent("请根据以下问题，生成一个简短的会话标题，不超过 10 个字，只返回标题本身：" + title);
         // 调用 DeepSeek API 生成标题
-        return deepSeekClient.chat(List.of(deepSeekMessage));
+        DeepSeekResult result = deepSeekClient.chat(List.of(deepSeekMessage));
+        return result.getReply();
     }
     
     private void checkRateLimit(Long userId) {

@@ -42,7 +42,7 @@ public class DeepSeekClient {
      * @param messages 对话消息列表
      * @return AI 回复的内容
      */
-    public String chat(List<DeepSeekMessage> messages) {
+    public DeepSeekResult chat(List<DeepSeekMessage> messages) {
         // 1. 构建请求参数
         DeepSeekRequest deepSeekRequest = new DeepSeekRequest();
         deepSeekRequest.setModel(deepSeekProperties.getModel());
@@ -78,8 +78,14 @@ public class DeepSeekClient {
             log.error("DeepSeek API 返回的消息格式异常");
             throw new BusinessException(ResultCode.DEEPSEEK_API_RETURN_FORMAT_ERROR);
         }
-            
+        
         // 7. 返回 AI 回复内容.getMessage() → 取消息对象  .getContent() → 取文本内容
-        return choice.getMessage().getContent();
+        DeepSeekResponse.Usage usage = response.getUsage();
+        return new DeepSeekResult(
+                choice.getMessage().getContent(),
+                usage != null ? usage.getTotalTokens() : 0,
+                usage != null ? usage.getPromptTokens() : 0,
+                usage != null ? usage.getCompletionTokens() : 0
+        );
     }
 }

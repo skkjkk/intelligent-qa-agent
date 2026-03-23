@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+    <include resource="org/springframework/boot/logging/logback/defaults.xml"/>
+
+    <!-- 应用日志格式：时间 + 彩色级别 + logger名 + 消息 -->
+    <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder>
+            <pattern>%clr(%d{HH:mm:ss.SSS}){faint} %clr(%-5level){highlight} %clr(---){faint} %clr(%-40.40logger{39}){cyan} : %m%n</pattern>
+            <charset>UTF-8</charset>
+        </encoder>
+    </appender>
+
+    <!-- SQL日志格式：加 [SQL] 黄色前缀，一眼区分 -->
+    <appender name="SQL_CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder>
+            <pattern>%clr(%d{HH:mm:ss.SSS}){faint} %clr([SQL]){yellow} %clr(%-5level){highlight} %clr(---){faint} %clr(%-40.40logger{39}){yellow} : %m%n</pattern>
+            <charset>UTF-8</charset>
+        </encoder>
+    </appender>
+
+    <!-- SQL日志：repository包下的DEBUG级别日志路由到SQL_CONSOLE -->
+    <logger name="com.jujiu.agent.repository" level="DEBUG" additivity="false">
+        <appender-ref ref="SQL_CONSOLE"/>
+    </logger>
+
+    <!-- 抑制框架噪音日志，只保留 WARN 及以上 -->
+    <logger name="org.springframework" level="WARN"/>
+    <logger name="org.mybatis" level="WARN"/>
+    <logger name="com.baomidou" level="WARN"/>
+    <logger name="io.lettuce" level="WARN"/>
+    <logger name="org.apache.ibatis" level="WARN"/>
+
+    <!-- 应用日志级别 -->
+    <logger name="com.jujiu.agent" level="INFO"/>
+
+    <root level="INFO">
+        <appender-ref ref="CONSOLE"/>
+    </root>
+</configuration>
