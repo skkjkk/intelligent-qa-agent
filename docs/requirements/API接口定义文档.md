@@ -257,19 +257,26 @@ Authorization: Bearer {token}
 ```
 Authorization: Bearer {token}
 Content-Type: application/json
+Accept: text/event-stream
 ```
 
 **请求参数**：
 ```json
 {
-  "sessionId": "session_123",
+  "sessionId": "session_123456789",
   "message": "你好，今天天气怎么样？"
 }
 ```
 
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| sessionId | String | 是 | 会话ID |
+| message | String | 是 | 消息内容（1-2000字符） |
+
 **响应格式**：SSE (Server-Sent Events)
 - Content-Type: `text/event-stream`
-- 数据逐段推送，每段为 AI 回复的一部分
+- Cache-Control: `no-cache`
+- Connection: `keep-alive`
 
 **响应示例**（流式）：
 ```
@@ -286,10 +293,32 @@ data: 晴朗
 data: [DONE]
 ```
 
+**技术实现**：
+- 后端使用 `SseEmitter` 推送数据
+- 配合 `WebClient` + `Flux` 调用 DeepSeek 流式接口
+- 支持缓冲区批量推送（20字符或遇到标点符号）
+- 超时时间：3分钟
+
 **说明**：
 - 此接口使用 SSE 协议，支持 AI 回复逐字推送到客户端
 - 与传统 `/chat/send` 接口相比，用户无需等待完整回复
 - 适合前端实现"打字机"效果的实时展示
+- 消息内容会实时保存在数据库中
+
+**客户端接收示例**（JavaScript）：
+```javascript
+const eventSource = new EventSource('/api/v1/chat/send/stream', {
+  headers: { 'Authorization': 'Bearer ' + token }
+});
+eventSource.onmessage = (event) => {
+  if (event.data === '[DONE]') {
+    eventSource.close();
+  } else {
+    // 追加到聊天窗口
+    appendMessage(event.data);
+  }
+};
+```
 
 ---
 
@@ -661,19 +690,79 @@ Authorization: Bearer {token}
 
 ## 10. 接口清单汇总
 
-| 分类 | 接口数量 | 接口列表 |
-|------|----------|----------|
-| 认证接口 | 8 | 注册、登录、刷新、登出、密码管理等 |
-| 对话接口 | 6 | 发送消息、流式发送、会话管理等 |
-| 工具接口 | 2 | 工具列表、工具执行 |
-| 历史接口 | 2 | 查询历史、导出记录 |
-| 工作流接口 | 2 | 创建工作流、执行工作流 |
-| 管理接口 | 1 | 用户管理 |
-| 系统接口 | 2 | 健康检查、系统信息 |
-| **总计** | **23** | - |
+### 已实现接口（14个）
+
+| 分类 | 接口数量 | 接口列表 | 状态 |
+|------|----------|----------|------|
+| 认证接口 | 6 | 注册、登录、刷新、登出、获取用户信息、修改密码 | ✅ 已完成 |
+| 对话接口 | 6 | 创建会话、发送消息、流式发送、获取会话列表、获取会话详情、删除会话 | ✅ 已完成 |
+| 系统接口 | 2 | 健康检查(/actuator/health)、Swagger UI | ✅ 已完成 |
+
+### 待实现接口（9个）
+
+| 分类 | 接口数量 | 接口列表 | 状态 |
+|------|----------|----------|------|
+| 认证接口 | 2 | 密码重置请求、密码重置确认 | ⏳ 待开发 |
+| 工具接口 | 2 | 工具列表、工具执行 | ⏳ 待开发 |
+| 历史接口 | 2 | 查询历史、导出记录 | ⏳ 待开发 |
+| 工作流接口 | 2 | 创建工作流、执行工作流 | ⏳ 待开发 |
+| 管理接口 | 1 | 用户管理 | ⏳ 待开发 |
+
+### 接口详情
+
+#### 认证接口 (Base: /api/v1/auth)
+
+| 接口 | 方法 | 路径 | 状态 |
+|------|------|------|------|
+| 用户登录 | POST | /login | ✅ |
+| 用户注册 | POST | /register | ✅ |
+| Token刷新 | POST | /refresh | ✅ |
+| 用户登出 | POST | /logout | ✅ |
+| 获取当前用户信息 | GET | /me | ✅ |
+| 修改密码 | POST | /password | ✅ |
+| 密码重置请求 | POST | /reset-request | ⏳ |
+| 密码重置确认 | POST | /reset-confirm | ⏳ |
+
+#### 对话接口 (Base: /api/v1/chat)
+
+| 接口 | 方法 | 路径 | 状态 |
+|------|------|------|------|
+| 创建会话 | POST | /session | ✅ |
+| 发送消息 | POST | /send | ✅ |
+| 流式发送消息 | POST | /send/stream | ✅ |
+| 获取会话列表 | GET | /sessions | ✅ |
+| 获取会话详情 | GET | /session/{sessionId} | ✅ |
+| 删除会话 | DELETE | /session/{sessionId} | ✅ |
+
+#### 工具接口 (Base: /api/v1/tools)
+
+| 接口 | 方法 | 路径 | 状态 |
+|------|------|------|------|
+| 获取工具列表 | GET | / | ⏳ |
+| 执行工具 | POST | /execute | ⏳ |
+
+#### 历史接口 (Base: /api/v1/history)
+
+| 接口 | 方法 | 路径 | 状态 |
+|------|------|------|------|
+| 查询对话历史 | GET | /conversations | ⏳ |
+| 导出对话记录 | POST | /export | ⏳ |
+
+#### 工作流接口 (Base: /api/v1/workflow)
+
+| 接口 | 方法 | 路径 | 状态 |
+|------|------|------|------|
+| 创建工作流 | POST | / | ⏳ |
+| 执行工作流 | POST | /{workflowId}/execute | ⏳ |
+
+#### 管理接口 (Base: /api/v1/admin)
+
+| 接口 | 方法 | 路径 | 状态 |
+|------|------|------|------|
+| 获取用户列表 | GET | /users | ⏳ |
 
 ---
 
-**文档状态**：✅ 已完成
-**接口总数**：22个
-**下一步**：生成Swagger/OpenAPI文档
+**文档状态**：✅ 已更新
+**已实现接口**：14个
+**待实现接口**：9个

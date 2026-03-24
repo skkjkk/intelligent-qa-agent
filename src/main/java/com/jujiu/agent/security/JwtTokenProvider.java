@@ -1,5 +1,6 @@
 package com.jujiu.agent.security;
 
+import com.jujiu.agent.common.constant.RedisKeys;
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.security.Keys;
@@ -168,27 +169,26 @@ public class JwtTokenProvider {
                 token != null && token.length() > 10 ? token.substring(0, 10) + "..." : "null");
     
         // 1. 检查是否在黑名单
-        String blacklistKey = "token:blacklist:" + token;
+        String blacklistKey = RedisKeys.getTokenBlacklistKey(token);
         if (redisTemplate.hasKey(blacklistKey)) {
-            log.warn("[JWT][TOKEN_VALIDATION] Token 已在黑名单中 (用户主动退出) - tokenPrefix={}", 
+            log.warn("[JWT][TOKEN_VALIDATION] Token 已在黑名单中 (用户主动退出) - tokenPrefix={}",
                     token != null && token.length() > 10 ? token.substring(0, 10) + "..." : "null");
-            return false;  
+            return false;
         }
-            
+
         // 首先检查令牌是否为空
         if (token == null || token.trim().isEmpty()) {
             log.warn("[JWT][TOKEN_VALIDATION] Token 为空");
             return false;
         }
-    
+
         // 2. 【新增】检查用户是否被全局拉黑（修改密码时用）
         try {
             Long userId = getUserId(token);
-            String userBlacklistKey = "user:logout:" + userId;
-            if (Boolean.TRUE.equals(redisTemplate.hasKey(userBlacklistKey))) {
-                log.warn("[JWT][TOKEN_VALIDATION] Token 已失效 (用户已修改密码) - userId={}, tokenPrefix={}", 
+            if (Boolean.TRUE.equals(redisTemplate.hasKey(RedisKeys.getUserLogoutKey(userId)))) {
+                log.warn("[JWT][TOKEN_VALIDATION] Token 已失效 (用户已修改密码) - userId={}, tokenPrefix={}",
                         userId, token.substring(0, 10) + "...");
-                return false; 
+                return false;
             }
         } catch (Exception e) {
             log.debug("[JWT][TOKEN_VALIDATION] 无法提取用户 ID，可能 Token 格式错误");

@@ -1,6 +1,8 @@
 package com.jujiu.agent.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.jujiu.agent.common.constant.BusinessConstants;
+import com.jujiu.agent.common.constant.RedisKeys;
 import com.jujiu.agent.common.exception.BusinessException;
 import com.jujiu.agent.common.result.ResultCode;
 import com.jujiu.agent.model.dto.request.*;
@@ -52,15 +54,15 @@ public class AuthServiceImpl implements AuthService {
     
     @Override
     public LoginResponse login(LoginRequest loginRequest) {
-        log.info("[AUTH][LOGIN] 收到登录请求 - username={}, ip={}", 
+        log.info("[AUTH][LOGIN] 收到登录请求 - username={}, ip={}",
                 loginRequest.getUsername(), getClientIp());
-        
-        String failKey = "login:fail:" + loginRequest.getUsername();
-        
+
+        String failKey = RedisKeys.getLoginFailKey(loginRequest.getUsername());
+
         // 检查是否被锁定
         String failCountStr = redisTemplate.opsForValue().get(failKey);
         failCountStr = failCountStr == null ? "0" : failCountStr;
-        if (Integer.parseInt(failCountStr) >= 5) {
+        if (Integer.parseInt(failCountStr) >= BusinessConstants.LOGIN_FAIL_MAX_COUNT) {
             log.warn("[AUTH][LOGIN] 登录失败次数过多，账号已被临时锁定 - username={}, failCount={}", 
                     loginRequest.getUsername(), failCountStr);
             throw new BusinessException(ResultCode.LOGIN_TOO_MANY);
@@ -92,8 +94,7 @@ public class AuthServiceImpl implements AuthService {
         }
         
         // 密码验证通过后，清除该用户的黑名单（允许新 Token 生效）
-        String userBlacklistKey = "user:logout:" + user.getId();
-        redisTemplate.delete(userBlacklistKey);
+        redisTemplate.delete(RedisKeys.getUserLogoutKey(user.getId()));
                 
         // 登录成功，保存登录日志
         saveLoginLog(user.getId(), 1);
@@ -167,8 +168,8 @@ public class AuthServiceImpl implements AuthService {
                 .email(registerRequest.getEmail())
                 .nickname(registerRequest.getNickname())
                 // 默认角色
-                .role("USER") 
-                .status(1)
+                .role(BusinessConstants.DEFAULT_ROLE)
+                .status(BusinessConstants.USER_STATUS_NORMAL)
                 .build();
 
         // 5. 插入数据库
@@ -230,9 +231,9 @@ public class AuthServiceImpl implements AuthService {
         // 次数 +1，返回增加后的值
         Long count = redisTemplate.opsForValue().increment(failKey);
 
-        // 如果是第一次设置（count=1），设置 10 分钟过期
+        // 如果是第一次设置（count=1），设置锁定时间过期
         if (count != null && count == 1) {
-            redisTemplate.expire(failKey, 10, TimeUnit.MINUTES);
+            redisTemplate.expire(failKey, BusinessConstants.LOGIN_FAIL_LOCK_TIME, TimeUnit.MILLISECONDS);
         }
     }
 
@@ -299,7 +300,7 @@ public class AuthServiceImpl implements AuthService {
         }
         
         // 将令牌加入黑名单，过期时间与令牌剩余有效时间一致
-        String blacklistKey = "token:blacklist:" + logoutRequestToken;
+        String blacklistKey = RedisKeys.getTokenBlacklistKey(logoutRequestToken);
         redisTemplate.opsForValue().set(blacklistKey, "1", remainingTime, TimeUnit.MILLISECONDS);
         
         Long userId = jwtTokenProvider.getUserId(logoutRequestToken);
@@ -355,14 +356,19 @@ public class AuthServiceImpl implements AuthService {
         // 3. 更新用户密码
         user.setPassword(passwordEncoder.encode(changePasswordRequest.getNewPassword()));
         userRepository.updateById(user);
-            
-        log.info("[AUTH][CHANGE_PASSWORD_SUCCESS] 密码修改成功 - userId={}, username={}", 
+
+        log.info("[AUTH][CHANGE_PASSWORD_SUCCESS] 密码修改成功 - userId={}, username={}",
                 userId, user.getUsername());
-    
+
         // 4. 将该用户加入黑名单（使该用户所有 token 失效）
-        String userBlacklistKey = "user:logout:" + userId;
-        redisTemplate.opsForValue().set(userBlacklistKey, "1", 7, TimeUnit.DAYS);
-            
-        log.info("[AUTH][CHANGE_PASSWORD_COMPLETE] 密码修改流程完成 - 用户所有 Token 已失效，blacklistExpire=7days", userId);
+        redisTemplate.opsForValue().set(
+                RedisKeys.getUserLogoutKey(userId),
+                "1",
+                BusinessConstants.USER_LOGOUT_EXPIRE,
+                TimeUnit.MILLISECONDS
+        );
+
+        log.info("[AUTH][CHANGE_PASSWORD_COMPLETE] 密码修改流程完成 - 用户{} 所有 Token 已失效，blacklistExpire={}ms", 
+                userId, BusinessConstants.USER_LOGOUT_EXPIRE);
     }
 }

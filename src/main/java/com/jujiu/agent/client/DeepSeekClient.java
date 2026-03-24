@@ -1,6 +1,8 @@
 package com.jujiu.agent.client;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.annotation.JsonProperty;
+import com.jujiu.agent.common.constant.BusinessConstants;
 import com.jujiu.agent.common.exception.BusinessException;
 import com.jujiu.agent.common.result.ResultCode;
 import com.jujiu.agent.config.DeepSeekProperties;
@@ -213,12 +215,12 @@ public class DeepSeekClient {
                 .retrieve()
                 .bodyToFlux(String.class)
                 // 过滤空行和 [DONE]
-                .filter(line -> line != null && !line.isEmpty() && !line.contains("[DONE]"))
+                .filter(line -> line != null && !line.isEmpty() && !line.contains(BusinessConstants.SSE_DONE))
                 .map(line -> {
                     try {
                         // 去掉 "data: " 前缀
                         String data = line.startsWith("data: ") ? line.substring(6) : line;
-                        if ("[DONE]".equals(data)) {
+                        if (BusinessConstants.SSE_DONE.equals(data)) {
                             return StreamResult.end(null);
                         }
 
@@ -230,8 +232,17 @@ public class DeepSeekClient {
 
                         StreamResponse.StreamChoice choice = response.getChoices().get(0);
 
+                        // 调试日志：检查解析后的response结构
+                        if (response.getUsage() != null) {
+                            log.debug("[DEEPSEEK][STREAM_PARSE_DEBUG] 解析到usage信息 - promptTokens={}, completionTokens={}, totalTokens={}, finish_reason={}",
+                                    response.getUsage().getPromptTokens(),
+                                    response.getUsage().getCompletionTokens(),
+                                    response.getUsage().getTotalTokens(),
+                                    choice.getFinishReason());
+                        }
+
                         // 检查是否是最后一条消息（有 usage 信息）
-                        if (choice.getFinish_reason() != null && "stop".equals(choice.getFinish_reason())) {
+                        if (choice.getFinishReason() != null && "stop".equals(choice.getFinishReason())) {
                             // 最后一条，返回 token 信息
                             if (response.getUsage() != null) {
                                 // 安全创建 StreamUsage，防止字段为 null
@@ -269,12 +280,19 @@ public class DeepSeekClient {
     @NoArgsConstructor
     @AllArgsConstructor
     public static class StreamResponse {
+        // 流式响应ID
         private String id;
+        // 对象类型
         private String object;
+        // 创建时间
         private Long created;
+        // 模型名称
         private String model;
-        private String system_fingerprint;
+        // 系统指纹
+        private String systemFingerprint;
+        // 流式选择列表
         private List<StreamChoice> choices;
+        // Token 用量信息
         private StreamUsage usage;  // 添加 usage 字段，只在最后一条消息中有
 
         /**
@@ -284,9 +302,13 @@ public class DeepSeekClient {
         @NoArgsConstructor
         @AllArgsConstructor
         public static class StreamChoice {
+            // 选择索引
             private Integer index;
+            // 流式增量
             private StreamDelta delta;
-            private String finish_reason;  // 为 "stop" 时表示结束
+            // 为 "stop" 时表示结束
+            @JsonProperty("finish_reason")
+            private String finishReason;  // 为 "stop" 时表示结束
         }
 
         /**
@@ -296,7 +318,9 @@ public class DeepSeekClient {
         @NoArgsConstructor
         @AllArgsConstructor
         public static class StreamDelta {
+            // 角色
             private String role;
+            // 内容
             private String content;
         }
 
@@ -307,8 +331,11 @@ public class DeepSeekClient {
         @NoArgsConstructor
         @AllArgsConstructor
         public static class StreamUsage {
+            @JsonProperty("prompt_tokens")
             private Integer promptTokens;
+            @JsonProperty("completion_tokens")
             private Integer completionTokens;
+            @JsonProperty("total_tokens")
             private Integer totalTokens;
         }
     }

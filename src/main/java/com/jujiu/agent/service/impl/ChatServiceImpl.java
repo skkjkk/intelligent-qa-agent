@@ -5,6 +5,8 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.jujiu.agent.client.DeepSeekClient;
 import com.jujiu.agent.client.DeepSeekResult;
+import com.jujiu.agent.common.constant.BusinessConstants;
+import com.jujiu.agent.common.constant.RedisKeys;
 import com.jujiu.agent.common.exception.BusinessException;
 import com.jujiu.agent.common.result.ResultCode;
 import com.jujiu.agent.config.DeepSeekProperties;
@@ -344,22 +346,22 @@ public class ChatServiceImpl implements ChatService {
         DeepSeekResult result = deepSeekClient.chat(List.of(deepSeekMessage));
         return result.getReply();
     }
-    
+
     private void checkRateLimit(Long userId) {
-        String key = "chat:rate:" + userId;
+        String key = RedisKeys.getChatRateKey(userId);
 
         Long count = redisTemplate.opsForValue().increment(key);
-        
-        // 第一次：设置60秒过期
+
+        // 第一次：设置时间窗口过期
         if (count != null && count == 1) {
-            redisTemplate.expire(key, 60, TimeUnit.SECONDS);
+            redisTemplate.expire(key, BusinessConstants.CHAT_RATE_WINDOW, TimeUnit.MILLISECONDS);
         }
-        
-        if (count != null && count >= deepSeekProperties.getMaxMessagesPerMinute()) {
+
+        if (count != null && count >= BusinessConstants.CHAT_MAX_PER_MINUTE) {
             log.error("用户 {} 创建会话频率过高", userId);
             throw new BusinessException(ResultCode.CHAT_RATE_LIMIT_EXCEEDED);
         }
-        
+
     }
 
     /**
@@ -474,7 +476,7 @@ public class ChatServiceImpl implements ChatService {
 
                     // 检查是否需要推送：缓冲区满 或 包含标点符号
                     boolean hasPunctuation = content.chars().anyMatch(c -> PUNCTUATION.indexOf(c) >= 0);
-                    if (buffer.length() >= BUFFER_SIZE || hasPunctuation) {
+                    if (buffer.length() >= BusinessConstants.SSE_BUFFER_SIZE || hasPunctuation) {
                         String batchContent = buffer.toString();
                         log.debug("[CHAT][STREAM_BATCH] 批量推送 - sessionId={}, length={}, content={}",
                                 request.getSessionId(), batchContent.length(), batchContent);
