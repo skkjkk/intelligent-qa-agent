@@ -1,5 +1,7 @@
 package com.jujiu.agent.tool;
 
+import com.jujiu.agent.model.dto.deepseek.ToolDefinition;
+
 import java.util.Map;
 
 /**
@@ -70,4 +72,20 @@ public abstract class AbstractTool {
      * @return 执行结果
      */
     public abstract String execute(Map<String, Object> params);
+
+    /**
+     * 获取工具参数定义
+     *
+     * 【设计目的】
+     * 定义工具需要哪些参数，用于：
+     * - Function Calling 时告诉 AI 需要传什么参数
+     * - 参数校验和文档生成
+     *
+     * 【返回格式】
+     * 返回符合 JSON Schema 的参数定义对象
+     * 包含：参数类型、属性列表、必填字段
+     *
+     * @return 参数定义对象
+     */
+    public abstract ToolDefinition.Parameters getParameters();
 }

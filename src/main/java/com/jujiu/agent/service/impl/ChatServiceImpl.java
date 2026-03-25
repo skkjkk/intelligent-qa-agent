@@ -23,6 +23,7 @@ import com.jujiu.agent.model.entity.Session;
 import com.jujiu.agent.repository.MessageRepository;
 import com.jujiu.agent.repository.SessionRepository;
 import com.jujiu.agent.service.ChatService;
+import com.jujiu.agent.service.FunctionCallingService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -59,6 +60,9 @@ public class ChatServiceImpl implements ChatService {
 
     @Autowired
     private StringRedisTemplate redisTemplate;
+    
+    @Autowired
+    private FunctionCallingService functionCallingService;
 
     /**
      * 生成会话ID：session_ + 雪花ID
@@ -207,7 +211,7 @@ public class ChatServiceImpl implements ChatService {
         Message message = Message.builder()
                 .messageId(generateMessageId())
                 .sessionId(request.getSessionId())
-                .role("user")
+                .role(BusinessConstants.ROLE_USER)
                 .content(request.getMessage())
                 .createdAt(LocalDateTime.now())
                 .build();
@@ -234,20 +238,24 @@ public class ChatServiceImpl implements ChatService {
         );
         // 3.2 转换为 DeepSeekMessage 列表
         List<DeepSeekMessage> deepSeekMessages = new ArrayList<>(historyMessages.stream()
-                .map(msg -> new DeepSeekMessage(
-                        msg.getRole(),
-                        msg.getContent()
-                )).toList());
+                .map(msg -> {
+                    DeepSeekMessage deepSeekMessage = new DeepSeekMessage();
+                    deepSeekMessage.setRole(msg.getRole());
+                    deepSeekMessage.setContent(msg.getContent());
+                    return deepSeekMessage;
+                }).toList());
         
         // 3.3 在列表最前面插入 system 消息
-        deepSeekMessages.add(0, new DeepSeekMessage("system",
-                deepSeekProperties.getSystemPrompt())
-        );
+        DeepSeekMessage systemMessage = new DeepSeekMessage();
+        systemMessage.setRole(BusinessConstants.ROLE_SYSTEM);
+        systemMessage.setContent(deepSeekProperties.getSystemPrompt());
+        deepSeekMessages.add(0, systemMessage);
         
         // 3.4 调用 DeepSeek 获取回复
         log.info("[CHAT][DEEPSEEK_CALL] 开始调用 DeepSeek API - sessionId={}, contextSize={}", 
                 request.getSessionId(), deepSeekMessages.size());
-        DeepSeekResult result = deepSeekClient.chat(deepSeekMessages);
+//        DeepSeekResult result = deepSeekClient.chat(deepSeekMessages);
+        DeepSeekResult result = functionCallingService.chatWithTools(deepSeekMessages);
         String aiReply = result.getReply();
         log.info("[CHAT][DEEPSEEK_RESPONSE] DeepSeek 返回成功 - sessionId={}, totalTokens={}, promptTokens={}, completionTokens={}", 
                 request.getSessionId(), result.getTotalTokens(), result.getPromptTokens(), result.getCompletionTokens());
@@ -423,18 +431,19 @@ public class ChatServiceImpl implements ChatService {
         
         // 将历史消息转换为 DeepSeek API 所需的消息格式
         List<DeepSeekMessage> deepSeekMessages = new ArrayList<>(historyMessages.stream()
-                .map(msg ->
-                        new DeepSeekMessage(
-                                msg.getRole(),
-                                msg.getContent()
-                        )
-                ).toList());
+                .map(msg -> {
+                    DeepSeekMessage deepSeekMessage = new DeepSeekMessage();
+                    deepSeekMessage.setRole(msg.getRole());
+                    deepSeekMessage.setContent(msg.getContent());
+                    return deepSeekMessage;
+                }).toList());
         
         // 在消息列表开头添加系统提示词，设定 AI 角色和行为准则
-        deepSeekMessages.add(0, 
-                new DeepSeekMessage(
-                BusinessConstants.ROLE_SYSTEM, deepSeekProperties.getSystemPrompt()
-                ));
+        DeepSeekMessage systemMessage = new DeepSeekMessage();
+        systemMessage.setRole(BusinessConstants.ROLE_SYSTEM);
+        systemMessage.setContent(deepSeekProperties.getSystemPrompt());
+        deepSeekMessages.add(0, systemMessage);
+       
         
         // 调用 DeepSeek 流式接口，获取 Flux 响应流（带 Token 统计）
         Flux<DeepSeekClient.StreamResult> stream = deepSeekClient.chatStreamWithUsage(deepSeekMessages);

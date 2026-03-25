@@ -54,4 +54,13 @@ public class DeepSeekRequest {
      */
     @Schema(description = "温度参数", title = "控制回复随机性", example = "0.7")
     private Double temperature;
+    
+    /**
+     * 工具列表
+     * 可供AI调用的工具定义列表
+     * 当提供此字段时，AI会根据用户意图自动选择合适的工具调用
+     */
+    @Schema(description = "工具列表", title = "可调用的工具定义")
+    private List<ToolDefinition> tools;
+
 }

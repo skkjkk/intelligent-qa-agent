@@ -1,9 +1,12 @@
 package com.jujiu.agent.client;
 
+import com.jujiu.agent.model.dto.deepseek.ToolCallDTO;
 import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
+
+import java.util.List;
 
 /**
  * DeepSeek API 调用结果
@@ -44,4 +47,10 @@ public class DeepSeekResult {
      */
     @Schema(description = "生成内容令牌数", title = "Completion Token 数")
     private int completionTokens;
+
+    /**
+     *工具调用列表
+     */
+    @Schema(description = "工具调用列表", title = "Tool Calls")
+    private List<ToolCallDTO> toolCalls;
 }

@@ -1,5 +1,6 @@
 package com.jujiu.agent.client;
 
+import cn.hutool.log.Log;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.jujiu.agent.common.constant.BusinessConstants;
@@ -10,6 +11,7 @@ import com.jujiu.agent.config.WebClientConfig;
 import com.jujiu.agent.model.dto.deepseek.DeepSeekMessage;
 import com.jujiu.agent.model.dto.deepseek.DeepSeekRequest;
 import com.jujiu.agent.model.dto.deepseek.DeepSeekResponse;
+import com.jujiu.agent.model.dto.deepseek.ToolDefinition;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
@@ -124,12 +126,13 @@ public class DeepSeekClient {
         
         log.info("[DEEPSEEK][CALL_COMPLETE] DeepSeek API 调用完成 - replyLength={}, totalTokens={}, promptTokens={}, completionTokens={}, costTime={}ms", 
                 choice.getMessage().getContent().length(), totalTokens, promptTokens, completionTokens, costTime);
-        
+
         return new DeepSeekResult(
                 choice.getMessage().getContent(),
                 totalTokens,
                 promptTokens,
-                completionTokens
+                completionTokens,
+                null
         );
     }
 
@@ -272,6 +275,76 @@ public class DeepSeekClient {
                 .filter(result -> result != null && (result.isEnd() || (result.getContent() != null && !result.getContent().isEmpty())));
     }
     
+    public DeepSeekResult chatWithTools(List<DeepSeekMessage> messages, List<ToolDefinition> tools) {
+        log.info("[DEEPSEEK][CHAT_WITH_TOOLS] 开始对话 - messages={}, tools={}", messages, tools);
+        
+        // 1. 构建请求参数
+        DeepSeekRequest request = new DeepSeekRequest();
+        request.setModel(deepSeekProperties.getModel());
+        request.setTools(tools);
+        request.setMessages(messages);
+        request.setTemperature(deepSeekProperties.getTemperature());
+        
+        log.debug("[DEEPSEEK][CHAT_WITH_TOOLS] 请求参数 - request={}", request);
+        
+        // 2. 构建请求头
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        headers.setBearerAuth(deepSeekProperties.getApiKey());
+
+        log.debug("[DEEPSEEK][CHAT_WITH_TOOLS] 请求头 - headers={}", headers);
+        
+        // 3. 打包请求体和请求头
+        HttpEntity<DeepSeekRequest> entity = new HttpEntity<>(request, headers);
+        
+        // 4. 发送POST请求，获取响应
+        log.info("[DEEPSEEK][CHAT_WITH_TOOLS] 发送POST请求 - url={}, entity={}", 
+                deepSeekProperties.getBaseUrl() + "/chat/completions", entity.getBody());
+        long startTime = System.currentTimeMillis();
+
+        DeepSeekResponse response = restTemplate.postForObject(
+                deepSeekProperties.getBaseUrl() + "/chat/completions",
+                entity,
+                DeepSeekResponse.class
+        );
+        
+        long costTime = System.currentTimeMillis() - startTime;
+        log.info("[DEEPSEEK][CHAT_WITH_TOOLS] DeepSeek API 请求完成 - costTime={}ms, response={}",
+                costTime, response != null ? "not null" : "null");
+        
+        // 5.值检查，防止NullPointerException
+        if (response == null || response.getChoices() == null || response.getChoices().isEmpty()) {
+            log.error("[DEEPSEEK][CHAT_WITH_TOOLS] DeepSeek API响应为空");
+            throw new BusinessException(ResultCode.DEEPSEEK_API_RETURN_NULL);
+         }
+        
+        // 6. 获取第一个选择
+        DeepSeekResponse.Choice choice = response.getChoices().get(0);
+        if (choice == null || choice.getMessage() == null) {
+            log.error("[DEEPSEEK][PARSE_ERROR] API 返回的消息格式异常 - choice={}, message={},",
+                    choice, choice != null ? choice.getMessage() : null);
+            throw new BusinessException(ResultCode.DEEPSEEK_API_RETURN_FORMAT_ERROR);
+        }
+        
+        log.debug("[DEEPSEEK][CHAT_WITH_TOOLS] DeepSeek工具调用成功 - tools={}, response={}", tools, response);
+        
+        // 7 .返回AI回复内容
+        DeepSeekResponse.Usage usage = response.getUsage();
+        int totalTokens = usage != null ? usage.getTotalTokens() : 0;
+        int promptTokens = usage != null ? usage.getPromptTokens() : 0;
+        int completionTokens = usage != null ? usage.getCompletionTokens() : 0;
+        
+        log.debug("[DEEPSEEK][CHAT_WITH_TOOLS] DeepSeek API TOKEN使用情况 - totalTokens={}, promptTokens={}, completionTokens={}",
+                totalTokens, promptTokens, completionTokens);
+
+        return new DeepSeekResult(
+                choice.getMessage().getContent(),
+                totalTokens,
+                promptTokens,
+                completionTokens,
+                choice.getMessage().getToolCalls()
+        );
+    }
 
     /**
      * 流式响应内部类

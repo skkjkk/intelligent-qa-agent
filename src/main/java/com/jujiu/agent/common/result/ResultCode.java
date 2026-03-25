@@ -87,7 +87,7 @@ public enum ResultCode {
      */
     SESSION_NOT_FOUND(2001, "会话不存在或无权限"),
 
-    
+
     /**
      * DeepSeek API 返回空结果
      */
@@ -97,7 +97,11 @@ public enum ResultCode {
      * DeepSeek API 响应消息格式异常
      */
     DEEPSEEK_API_RETURN_FORMAT_ERROR(3002, "DeepSeek API 返回的消息格式异常"),
-
+    
+    /**
+     * 函数调用最大次数 exceeded
+     */
+    FUNCTION_CALLING_MAX_ITERATIONS(3005, "函数调用最大次数 exceeded"),
     /**
      * 发送消息过于频繁，请稍后再试
      */

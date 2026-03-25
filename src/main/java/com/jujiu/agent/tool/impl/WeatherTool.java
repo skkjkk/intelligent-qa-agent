@@ -1,5 +1,6 @@
 package com.jujiu.agent.tool.impl;
 
+import com.jujiu.agent.model.dto.deepseek.ToolDefinition;
 import com.jujiu.agent.tool.AbstractTool;
 import com.jujiu.agent.tool.ToolRegistry;
 import lombok.extern.slf4j.Slf4j;
@@ -9,6 +10,8 @@ import org.springframework.web.client.RestTemplate;
 import org.springframework.web.util.UriComponentsBuilder;
 
 import java.net.URI;
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -100,6 +103,30 @@ public class WeatherTool extends AbstractTool {
         }
     }
 
+    @Override
+    public ToolDefinition.Parameters getParameters() {
+        // 1. 创建参数定义对象
+        ToolDefinition.Parameters parameters = new ToolDefinition.Parameters();
+        parameters.setType("object");
+        
+        // 2. 定义city参数
+        ToolDefinition.Property property = new ToolDefinition.Property();
+        property.setType("string");
+        property.setDescription("城市名称，如'Beijing'、'Shanghai'");
+        
+        // 3. 将参数添加到properties
+        Map<String, ToolDefinition.Property> properties = new HashMap<>();
+        properties.put("city", property);
+        parameters.setProperties(properties);
+        
+        // 4. 设置required
+        List<String> require = new ArrayList<>();
+        require.add("city");
+        parameters.setRequired(require);
+        
+        return parameters;
+    }
+    
     /**
      * 获取城市坐标（使用 Geocoding API）
      */
