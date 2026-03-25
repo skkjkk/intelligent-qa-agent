@@ -3,7 +3,12 @@ package com.jujiu.agent.config;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
+import org.springframework.http.converter.StringHttpMessageConverter;
 import org.springframework.web.client.RestTemplate;
+import reactor.netty.http.client.HttpClient;
+
+import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 
 /**
  * @author 17644
@@ -15,19 +20,17 @@ public class AppConfig {
     
     @Bean
     public RestTemplate restTemplate() {
-        
-        // 创建HTTP连接工厂，专门用来配置超时
+        // 1. 使用更好的工厂类（推荐 HttpClient，但 Simple 也行，关键是传进去）
         SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
-        
-        // 连接超时：3秒（连接 DeepSeek 服务器的最长等待时间）
         factory.setConnectTimeout(3000);
-        
-        // 读取超时：3秒（读取 DeepSeek 服务器响应的最长等待时间）
-        factory.setReadTimeout(3000);
-
-        // 读取超时：30秒（读取 DeepSeek 服务器响应的最长等待时间）
         factory.setReadTimeout(30000);
-        
-        return new RestTemplate();
+
+        RestTemplate restTemplate = new RestTemplate(factory);
+
+        // 2. 解决和风天气 Gzip 压缩导致乱码/解析失败的问题
+        // 如果不加这个，即使 200 了，你拿到的 Map 也可能是空的或报错
+        restTemplate.getMessageConverters().add(0, new StringHttpMessageConverter(StandardCharsets.UTF_8));
+
+        return restTemplate;
     }
 }

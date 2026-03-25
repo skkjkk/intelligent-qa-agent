@@ -263,7 +263,7 @@ public class ChatServiceImpl implements ChatService {
         Message aiMessage = Message.builder()
                 .messageId(generateMessageId())
                 .sessionId(request.getSessionId())
-                .role("assistant")
+                .role(BusinessConstants.ROLE_ASSISTANT)
                 .content(aiReply)
                 .createdAt(LocalDateTime.now())
                 .tokens(result.getCompletionTokens())
@@ -340,7 +340,7 @@ public class ChatServiceImpl implements ChatService {
     private String generateTitle(String title){
         // 构建请求 AI 生成标题的消息
         DeepSeekMessage deepSeekMessage = new DeepSeekMessage();
-        deepSeekMessage.setRole("user");
+        deepSeekMessage.setRole(BusinessConstants.ROLE_USER);
         deepSeekMessage.setContent("请根据以下问题，生成一个简短的会话标题，不超过 10 个字，只返回标题本身：" + title);
         // 调用 DeepSeek API 生成标题
         DeepSeekResult result = deepSeekClient.chat(List.of(deepSeekMessage));
@@ -378,7 +378,7 @@ public class ChatServiceImpl implements ChatService {
         log.info("[CHAT][SEND_MESSAGE_STREAM] 收到消息流请求 - userId={}, sessionId={}", userId, request.getSessionId());
         
         // 创建 SseEmitter，设置 3 分钟超时时间
-        SseEmitter emitter = new SseEmitter(180000L);
+        SseEmitter emitter = new SseEmitter(BusinessConstants.SSE_TIMEOUT);
         
         // 校验会话是否存在且属于当前用户
         Session session = sessionRepository.selectOne(
@@ -397,7 +397,7 @@ public class ChatServiceImpl implements ChatService {
         Message message = Message.builder()
                 .messageId(generateMessageId())
                 .sessionId(request.getSessionId())
-                .role("user")
+                .role(BusinessConstants.ROLE_USER)
                 .content(request.getMessage())
                 .createdAt(LocalDateTime.now())
                 .build();
@@ -433,7 +433,7 @@ public class ChatServiceImpl implements ChatService {
         // 在消息列表开头添加系统提示词，设定 AI 角色和行为准则
         deepSeekMessages.add(0, 
                 new DeepSeekMessage(
-                "system", deepSeekProperties.getSystemPrompt()
+                BusinessConstants.ROLE_SYSTEM, deepSeekProperties.getSystemPrompt()
                 ));
         
         // 调用 DeepSeek 流式接口，获取 Flux 响应流（带 Token 统计）
@@ -443,8 +443,6 @@ public class ChatServiceImpl implements ChatService {
         StringBuilder fullReply = new StringBuilder();
         // 缓冲区，用于积累数据块
         StringBuilder buffer = new StringBuilder();
-        // 触发推送的缓冲区大小阈值
-        final int BUFFER_SIZE = 20;
         // 标点符号，遇到时立即推送
         final String PUNCTUATION = "。！？.!?\n";
         // Token 用量统计（最后一条消息会填充）

@@ -14,3 +14,9 @@ springdoc:
     path: /swagger-ui.html
     tags-sorter: alpha
     operations-sorter: alpha
+    
+# 天气API公共配置
+weather:
+  api:
+    # URL 放在这里，因为dev和prod可能用不同的URL（如测试环境vs正式环境）
+    url: https://api.openweathermap.org/data/2.5/weather
