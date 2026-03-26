@@ -22,6 +22,7 @@ public class ExecuteToolRequest {
      * 工具名称（如 "天气查询"）
      */
     @NotBlank(message = "工具名称不能为空")
+    @Schema(description = "工具名称", example = "天气查询")
     private String toolName;
 
     /**
@@ -34,5 +35,6 @@ public class ExecuteToolRequest {
      * - Map 不可能是空字符串，所以必须用 @NotNull
      */
     @NotNull(message = "工具参数不能为空")
+    @Schema(description = "工具参数", example = "{\"city\": \"北京\"}")
     private Map<String, Object> parameters;
 }

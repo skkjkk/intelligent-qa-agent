@@ -251,7 +251,7 @@ public class ChatServiceImpl implements ChatService {
         systemMessage.setContent(deepSeekProperties.getSystemPrompt());
         deepSeekMessages.add(0, systemMessage);
         
-        // 3.4 调用 DeepSeek 获取回复
+        // 3.4 调用 DeepSeek可执行工具的接口获取回复
         log.info("[CHAT][DEEPSEEK_CALL] 开始调用 DeepSeek API - sessionId={}, contextSize={}", 
                 request.getSessionId(), deepSeekMessages.size());
 //        DeepSeekResult result = deepSeekClient.chat(deepSeekMessages);

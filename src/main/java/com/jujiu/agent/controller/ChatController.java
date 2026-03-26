@@ -36,9 +36,6 @@ public class ChatController {
     @Autowired
     private ChatService chatService;
 
-    @Autowired
-    private JwtTokenProvider jwtTokenProvider;
-
     /**
      * 从 Spring Security 上下文中获取当前登录用户的 ID
      *

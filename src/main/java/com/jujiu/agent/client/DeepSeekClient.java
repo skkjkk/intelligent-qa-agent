@@ -291,8 +291,6 @@ public class DeepSeekClient {
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_JSON);
         headers.setBearerAuth(deepSeekProperties.getApiKey());
-
-        log.debug("[DEEPSEEK][CHAT_WITH_TOOLS] 请求头 - headers={}", headers);
         
         // 3. 打包请求体和请求头
         HttpEntity<DeepSeekRequest> entity = new HttpEntity<>(request, headers);

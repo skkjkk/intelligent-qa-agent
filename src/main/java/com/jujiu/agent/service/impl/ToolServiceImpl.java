@@ -93,7 +93,7 @@ public class ToolServiceImpl implements ToolService {
             String result = tool.execute(parameters);
             long executionTime = System.currentTimeMillis() - startTime;
 
-            log.info("[工具执行] 执行成功：name={}, time={}ms", toolName, executionTime);
+            log.info("[工具执行] 执行成功：name={}, time={}ms, result={}", toolName, executionTime, result);
 
             // 3. 返回结果
             return ExecuteToolResponse.builder()

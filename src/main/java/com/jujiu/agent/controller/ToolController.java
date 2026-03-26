@@ -63,7 +63,7 @@ public class ToolController {
         log.info("[工具执行] 收到执行工具请求：toolName={}", request.getToolName());
 
         ExecuteToolResponse response = toolService.executeTool(request);
-
+        
         // 返回执行结果
         // 注意：这里不判断 success，直接返回，让前端决定如何处理
         return Result.success(response);
