@@ -131,7 +131,8 @@ public class ToolServiceImpl implements ToolService {
         return switch (name) {
             case "weather" -> "天气查询";
             case "calculator" -> "计算器";
-            case "search" -> "搜索";
+            case "web_search" -> "网页搜索";
+            case "translator" -> "翻译器";
             default -> "未知工具";
         };
     }

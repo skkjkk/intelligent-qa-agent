@@ -1,0 +1,173 @@
+package com.jujiu.agent.tool.impl;
+
+import com.jujiu.agent.model.dto.deepseek.ToolDefinition;
+import com.jujiu.agent.tool.AbstractTool;
+import com.jujiu.agent.tool.ToolRegistry;
+
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Component;
+import org.springframework.web.client.RestTemplate;
+import org.springframework.web.util.UriComponentsBuilder;
+
+import java.io.UnsupportedEncodingException;
+import java.net.URI;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+/**
+ * @author 17644
+ * @version 1.0.0
+ * @since 2026/3/26 15:35
+ */
+@Component
+@Slf4j
+public class WebSearchTool extends AbstractTool {
+
+    private final RestTemplate restTemplate;
+
+    // SerpAPI API密钥
+    @Value("${serpapi.api.key:}")
+    private  String apiKey;
+
+    public WebSearchTool(ToolRegistry toolRegistry, RestTemplate restTemplate) {
+        this.restTemplate = restTemplate;
+        // 向工具注册表中注册当前工具
+        toolRegistry.register(this);
+    }
+    @Override
+    public String getName() {
+        return "web_search";
+    }
+
+    @Override
+    public String getDescription() {
+        return "网页搜索工具，使用 SerpAPI 搜索互联网信息。" +
+                "参数：query（必填，搜索关键词，如'Java并发编程'）。" +
+                "返回：搜索结果摘要和链接。";
+    }
+
+    @Override
+    public String execute(Map<String, Object> params) {
+        // 1. 获取搜索关键词
+        String query = (String) params.get("query");
+        log.info("搜索关键词为: {}", query);
+        
+        // 2. 参数校验
+        if (query == null || query.isEmpty()) {
+            return "错误：缺少必填参数 query（搜索关键词）";
+        }
+
+        if (apiKey == null || apiKey.isEmpty()) {
+            log.warn("[网页搜索] 未配置完整的 API Key，返回模拟数据");
+            return "错误：缺少必填参数 apiKey（SerpAPI API密钥）";
+        }
+        
+        try {
+            // 3. 调用serpapi进行搜索
+            return searchWithSerpAPI(query);
+            
+        } catch (Exception e) {
+            log.error("[网页搜索] 搜索失败: {}", e.getMessage(), e);
+            return "搜索失败：" + e.getMessage();
+        }
+    }
+
+    private String searchWithSerpAPI(String query) throws UnsupportedEncodingException {
+        try {
+            // 1. 构建请求URL
+            URI uri = UriComponentsBuilder
+                    .fromUriString("https://serpapi.com/search")
+                    .queryParam("q", query)
+                    .queryParam("engine", "google")
+                    .queryParam("api_key", apiKey)
+                    .build()
+                    .encode()
+                    .toUri();
+            log.info("[网页搜索] 请求URL");
+            
+            // 2. 发送请求
+            @SuppressWarnings("unchecked")
+            Map<String, Object> response = restTemplate.getForObject(uri, Map.class);
+            if (response == null) {
+                return "错误：搜索无结果";
+            }
+            
+            // 3. 解析搜索结果
+            return parseSearchResult(response);
+            
+        } catch (Exception e) {
+            log.error("[网页搜索] SerpAPI 调用失败: {}", e.getMessage());
+            throw new RuntimeException("SerpAPI 调用失败: " + e.getMessage());
+        }
+    }
+
+    private String parseSearchResult(Map<String, Object> response) {
+
+        try {
+            // 1. 获取搜索结果数组
+            @SuppressWarnings("unchecked")
+            List<Map<String, Object>> results = (List<Map<String, Object>>) response.get("organic_results");
+            
+            if (results == null || results.isEmpty()) {
+                return "未找到相关搜索结果";
+            }
+            
+            // 2. 格式化前 5 个结果
+            StringBuilder sb = getStringBuilder(results);
+
+            return sb.toString();
+        } catch (Exception e) {
+            log.error("[网页搜索] 解析搜索结果失败: {}", e.getMessage());
+            throw new RuntimeException("解析搜索结果失败: " + e.getMessage());
+        }
+    }
+
+    private static StringBuilder getStringBuilder(List<Map<String, Object>> results) {
+        // 1. 创建StringBuilder对象
+        StringBuilder sb = new StringBuilder("搜索结果：\n");
+        int count = Math.min(results.size(), 5);
+
+        // 2. 遍历结果集
+        for (int i = 0; i < count; i++) {
+            Map<String, Object> result = results.get(i);
+            String title = (String) result.get("title");
+            String snippet = (String) result.get("snippet");
+            String link = (String) result.get("link");
+            
+            // 3. 格式化结果
+            sb.append(String.format("%d, %s\n摘要：%s\n链接：%s\n\n",
+                    i + 1, title, snippet, link));
+        }
+        return sb;
+    }
+
+    @Override
+    public ToolDefinition.Parameters getParameters() {
+        // 1. 创建参数定义对象
+        ToolDefinition.Parameters parameters = new ToolDefinition.Parameters();
+        parameters.setType("object");
+        
+        // 2. 定义query参数
+        ToolDefinition.Property property = new ToolDefinition.Property();
+        property.setType("string");
+        property.setDescription("搜索关键词，如'Java并发编程'");
+        
+        // 3. 将参数添加到parameters
+        Map<String, ToolDefinition.Property> properties = new HashMap<>();
+        properties.put("query", property);
+        parameters.setProperties(properties);
+        
+        // 4. 设置require
+        List<String> require = new ArrayList<>();
+        require.add("query");
+        parameters.setRequired(require);
+
+        log.info("parameters: {}", parameters);
+        
+        // 5. 返回参数定义对象
+        return parameters;
+    }
+}
