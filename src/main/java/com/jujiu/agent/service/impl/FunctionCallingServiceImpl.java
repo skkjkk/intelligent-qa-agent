@@ -54,7 +54,7 @@ public class FunctionCallingServiceImpl implements FunctionCallingService {
         
         // 2. 如果没有工具，直接调用普通对话
         if (toolDefinitions.isEmpty()) {
-            log.warn("[FUNCTION_CALLING]有可用的工具，将进行普通对话");
+            log.warn("[FUNCTION_CALLING] 没有可用的工具，将进行普通对话");
             return deepSeekClient.chat(messages);
         }
         
@@ -76,7 +76,7 @@ public class FunctionCallingServiceImpl implements FunctionCallingService {
             
             // 6. 将 assistant 的消息（包含 tool_calls）加入对话历史
             DeepSeekMessage assistantMessage = new DeepSeekMessage();
-            assistantMessage.setRole("assistant");
+            assistantMessage.setRole(DeepSeekMessage.MessageRole.ASSISTANT);
             assistantMessage.setContent(result.getReply());
             assistantMessage.setToolCalls(toolCalls);
             messages.add(assistantMessage);
@@ -108,7 +108,7 @@ public class FunctionCallingServiceImpl implements FunctionCallingService {
         
         // 2. 转为ToolDefinition格式
         for (AbstractTool tool : tools) {
-            ToolDefinition definition = converToToolDefinition(tool);
+            ToolDefinition definition = convertToToolDefinition(tool);
             toolDefinitions.add(definition);
         }
 
@@ -122,7 +122,7 @@ public class FunctionCallingServiceImpl implements FunctionCallingService {
      * @param tool 工具对象
      * @return 工具定义
      */
-    private ToolDefinition converToToolDefinition(AbstractTool tool) {
+    private ToolDefinition convertToToolDefinition(AbstractTool tool) {
         ToolDefinition definition = new ToolDefinition();
         definition.setType("function");
         ToolDefinition.Function function = new ToolDefinition.Function();
@@ -152,10 +152,14 @@ public class FunctionCallingServiceImpl implements FunctionCallingService {
             // 1. 从ToolRegistry中获取工具
             AbstractTool tool = toolRegistry.getTool(toolName);
             if (tool == null) {
-                log.error("[FUNCTION_CALLING]具不存在 - name={}", toolName);
+                log.error("[FUNCTION_CALLING] 工具不存在 - name={}", toolName);
                 return "错误：工具不存在 - " + toolName;
             }
 
+            if (arguments == null || arguments.trim().isEmpty()) {
+                log.error("[FUNCTION_CALLING] 工具参数为空 - name={}", toolName);
+                return "错误：工具参数为空";
+            }
             // 2. 解析参数（JSON字符串->Map）
             @SuppressWarnings("unchecked")
             Map<String, Object> params = objectMapper.readValue(arguments, Map.class);

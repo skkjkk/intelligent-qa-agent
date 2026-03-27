@@ -22,7 +22,7 @@ public class ExecuteToolRequest {
      * 工具名称（如 "天气查询"）
      */
     @NotBlank(message = "工具名称不能为空")
-    @Schema(description = "工具名称", example = "天气查询")
+    @Schema(description = "工具名称（系统标识）", example = "weather")
     private String toolName;
 
     /**
@@ -37,4 +37,9 @@ public class ExecuteToolRequest {
     @NotNull(message = "工具参数不能为空")
     @Schema(description = "工具参数", example = "{\"city\": \"北京\"}")
     private Map<String, Object> parameters;
+
+    // 可选：添加验证方法
+    public boolean hasValidParameters() {
+        return parameters != null && !parameters.isEmpty();
+    }
 }

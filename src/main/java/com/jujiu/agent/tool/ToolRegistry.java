@@ -84,7 +84,7 @@ public class ToolRegistry {
      * 用于 /tools 接口，返回给前端展示所有可用工具
      */
     public List<AbstractTool> getAllTools() {
-        return Collections.unmodifiableList(toolRegistry.values().stream().toList());
+        return List.copyOf(toolRegistry.values());
     }
 
     /**
@@ -127,4 +127,17 @@ public class ToolRegistry {
         }
         log.info("==============================================");
     }
+
+    /**
+     * 卸载工具
+     *
+     * @param name 工具名称
+     */
+    public void unregister(String name) {
+        AbstractTool removed = toolRegistry.remove(name);
+        if (removed != null) {
+            log.info("[工具注册] 已卸载工具：name={}", name);
+        }
+    }
+
 }

@@ -150,8 +150,16 @@ public class WeatherTool extends AbstractTool {
             }
             
             Map<String, Object> location = response.get(0);
-            double lat = ((Number) location.get("lat")).doubleValue();
-            double lon = ((Number) location.get("lon")).doubleValue();
+            Object latObj = location.get("lat");
+            Object lonObj = location.get("lon");
+            
+            if (!(latObj instanceof Number) || !(lonObj instanceof Number)) {
+                log.error("[天气查询] 坐标数据格式错误");
+                return null;
+            }
+
+            double lat = ((Number) latObj).doubleValue();
+            double lon = ((Number) lonObj).doubleValue();
             
             log.info("[天气查询] 城市: {} -> 坐标: lat={}, lon={}", city, lat, lon);
             return new double[]{lat, lon};
@@ -188,7 +196,14 @@ public class WeatherTool extends AbstractTool {
             }
             
             // 检查返回码
-            Integer cod = (Integer) response.get("cod");
+            Object codObj = response.get("cod");
+            Integer cod = null;
+            if (codObj instanceof Integer) {
+                cod = (Integer) codObj;
+            } else if (codObj instanceof Double) {
+                cod = ((Double) codObj).intValue();
+            }
+            
             if (cod == null || cod != 200) {
                 log.error("[天气查询] API返回错误: {}", response.get("message"));
                 return "天气查询失败：" + response.get("message");
@@ -237,5 +252,16 @@ public class WeatherTool extends AbstractTool {
     private String getMockWeather(String city) {
         log.warn("[天气查询] 未配置 API Key，返回模拟数据");
         return city + "当前天气：晴，温度22℃，湿度50%，东南风2级（模拟数据）";
+    }
+
+    @SuppressWarnings("unchecked")
+    private <T> T castSafely(Object obj, Class<T> type) {
+        if (obj == null) {
+            return null;
+        }
+        if (type.isInstance(obj)) {
+            return (T) obj;
+        }
+        return null;
     }
 }

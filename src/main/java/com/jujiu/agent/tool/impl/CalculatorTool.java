@@ -42,14 +42,14 @@ public class CalculatorTool extends AbstractTool {
 
     @Override
     public String execute(Map<String, Object> params) {
-        // 1. 从params获取expression参数
-        String expression = (String) params.get("expression");
-        
-        // 2. 校验参数
-        if (expression == null) {
-            return "错误：缺少必填参数 expression（数学表达式）";
+        // 1. 从params获取expression参数校验参数
+        Object exprObj = params.get("expression");
+        if (!(exprObj instanceof String)) {
+            return "错误：expression 参数必须是字符串";
         }
-
+        
+        String expression = (String) exprObj;
+        
         try {
             // 3. 调用计算方法
             double result = calculate(expression);
@@ -107,96 +107,4 @@ public class CalculatorTool extends AbstractTool {
         // 5. 返回参数定义对象
         return parameters;
     }
-
-
-//    private double calculate(String expression) {
-//        // 去除空格
-//        expression = expression.replaceAll("\\s+", "");
-//
-//        // 数字栈
-//        ArrayDeque<Double> numStack  = new ArrayDeque<>();
-//        
-//        // 运算符栈
-//        ArrayDeque<Character> opStack  = new ArrayDeque<>();
-//        
-//        int i = 0;
-//
-//        while (i < expression.length()) {
-//            // 每次循环开始从 i 读字符
-//            char c = expression.charAt(i);
-//
-//            if (Character.isDigit(c) || c == '.') {
-//                // 情况1：读取完整的数字（可能多位），如“123”
-//                // 使用一个StringBuilder来存储数字，知道不是数字为止
-//                StringBuilder sb = new StringBuilder();
-//                while (i < expression.length() && (Character.isDigit(c) || c == '.')) {
-//                    sb.append(c);
-//                    ++i;
-//                    if (i < expression.length()) {
-//                        c = expression.charAt(i);
-//                    }
-//                }
-//                numStack.push(Double.parseDouble(sb.toString()));
-//                continue;
-//            } else if (c == '(') {
-//                // 情况2：左括号，直接压栈
-//                opStack.push(c);
-//            } else if (c == ')') {
-//                // 情况3：右括号，计算到左括号为止
-//                // while 运算符栈顶不是'('，就调用compute()
-//                // 最后弹出'('
-//                while (!opStack.isEmpty() && opStack.peek() != '(') {
-//                    compute(numStack, opStack);
-//                }
-//                opStack.pop();
-//            } else if (c == '+' || c == '-' || c == '*' || c == '/') {
-//                // 情况4：运算符，根据优先级进行计算
-//                // while栈顶不为空&& 栈顶不是'(' && 栈顶优先级>=当前运算符优先级
-//                // 调用compute()
-//                // 将当前运算符压栈
-//                while (!opStack.isEmpty() && opStack.peek() != '(' && priority(opStack.peek()) >= priority(c)) {
-//                    compute(numStack, opStack);
-//                }
-//                opStack.push(c);
-//            }
-//            ++i;
-//        }
-//        
-//        // 循环结束后，栈中应该只有一个数字，即结果
-//        while (!opStack .isEmpty()) {
-//            compute(numStack, opStack );
-//        }
-//        return numStack.pop();
-//    }
-    
-    private int priority(char operator) {
-        if (operator == '+' || operator == '-') {
-            return 1;
-        }
-        if (operator == '*' || operator == '/') {
-            return 2;
-        }
-        // (的优先级最低
-        return 0;
-    }
-
-    private void compute(Deque<Double> numStack, Deque<Character> opStack) {
-        Character op = opStack.pop();
-        // 弹出右操作数
-        Double b = numStack.pop();
-        // 弹出左操作数
-        Double a = numStack.pop();
-
-        Double result = switch (op) {
-            case '+' -> a + b;
-            case '-' -> a - b;
-            case '*' -> a * b;
-            case '/' -> a / b;
-            default -> throw new IllegalArgumentException("非法运算符: " + op);
-        };
-
-        // 将结果压回数字栈
-        numStack.push(result);
-    }
-    
 }

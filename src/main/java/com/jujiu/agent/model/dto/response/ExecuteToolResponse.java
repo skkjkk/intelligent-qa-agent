@@ -1,6 +1,7 @@
 package com.jujiu.agent.model.dto.response;
 
 import io.swagger.v3.oas.annotations.media.Schema;
+import jakarta.validation.constraints.NotBlank;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -21,6 +22,8 @@ public class ExecuteToolResponse {
     /**
      * 工具名称
      */
+
+    @NotBlank(message = "工具名称不能为空")
     @Schema(description = "工具名称", title = "工具名称")
     private String toolName;
 
@@ -39,8 +42,9 @@ public class ExecuteToolResponse {
     /**
      * 是否成功
      */
+    @NotBlank(message = "是否成功不能为空")
     @Schema(description = "是否成功", title = "是否成功")
-    private Boolean success;
+    private boolean success;
 
     /**
      * 错误信息（如果失败）

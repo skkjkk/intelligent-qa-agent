@@ -53,6 +53,7 @@ public abstract class AbstractTool {
      * - 返回什么结果
      */
     public abstract String getDescription();
+
     /**
      * 执行工具
      *
@@ -68,8 +69,12 @@ public abstract class AbstractTool {
      * - 统一返回格式，便于处理
      * - 无论工具内部多复杂，对外接口统一
      *
+     * 【参数验证】
+     * 子类应该在 execute() 中验证必填参数，返回错误信息而不是抛异常
+     * 例如：缺少参数时返回 "错误：缺少必填参数 xxx"
+     *
      * @param params 工具参数（如 {"city": "北京"}）
-     * @return 执行结果
+     * @return 执行结果（成功返回数据，失败返回错误信息）
      */
     public abstract String execute(Map<String, Object> params);
 

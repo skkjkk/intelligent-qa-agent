@@ -240,14 +240,16 @@ public class ChatServiceImpl implements ChatService {
         List<DeepSeekMessage> deepSeekMessages = new ArrayList<>(historyMessages.stream()
                 .map(msg -> {
                     DeepSeekMessage deepSeekMessage = new DeepSeekMessage();
-                    deepSeekMessage.setRole(msg.getRole());
+                    String roleStr = msg.getRole();
+                    DeepSeekMessage.MessageRole role = DeepSeekMessage.MessageRole.valueOf(roleStr.toUpperCase());
+                    deepSeekMessage.setRole(role);
                     deepSeekMessage.setContent(msg.getContent());
                     return deepSeekMessage;
                 }).toList());
         
         // 3.3 在列表最前面插入 system 消息
         DeepSeekMessage systemMessage = new DeepSeekMessage();
-        systemMessage.setRole(BusinessConstants.ROLE_SYSTEM);
+        systemMessage.setRole(DeepSeekMessage.MessageRole.SYSTEM);
         systemMessage.setContent(deepSeekProperties.getSystemPrompt());
         deepSeekMessages.add(0, systemMessage);
         
@@ -348,7 +350,7 @@ public class ChatServiceImpl implements ChatService {
     private String generateTitle(String title){
         // 构建请求 AI 生成标题的消息
         DeepSeekMessage deepSeekMessage = new DeepSeekMessage();
-        deepSeekMessage.setRole(BusinessConstants.ROLE_USER);
+        deepSeekMessage.setRole(DeepSeekMessage.MessageRole.USER);
         deepSeekMessage.setContent("请根据以下问题，生成一个简短的会话标题，不超过 10 个字，只返回标题本身：" + title);
         // 调用 DeepSeek API 生成标题
         DeepSeekResult result = deepSeekClient.chat(List.of(deepSeekMessage));
@@ -433,14 +435,14 @@ public class ChatServiceImpl implements ChatService {
         List<DeepSeekMessage> deepSeekMessages = new ArrayList<>(historyMessages.stream()
                 .map(msg -> {
                     DeepSeekMessage deepSeekMessage = new DeepSeekMessage();
-                    deepSeekMessage.setRole(msg.getRole());
+                    deepSeekMessage.setRole(DeepSeekMessage.MessageRole.valueOf(msg.getRole()));
                     deepSeekMessage.setContent(msg.getContent());
                     return deepSeekMessage;
                 }).toList());
         
         // 在消息列表开头添加系统提示词，设定 AI 角色和行为准则
         DeepSeekMessage systemMessage = new DeepSeekMessage();
-        systemMessage.setRole(BusinessConstants.ROLE_SYSTEM);
+        systemMessage.setRole(DeepSeekMessage.MessageRole.SYSTEM);
         systemMessage.setContent(deepSeekProperties.getSystemPrompt());
         deepSeekMessages.add(0, systemMessage);
        

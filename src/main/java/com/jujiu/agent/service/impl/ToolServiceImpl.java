@@ -1,6 +1,7 @@
 package com.jujiu.agent.service.impl;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.jujiu.agent.model.dto.deepseek.ToolDefinition;
 import com.jujiu.agent.model.dto.request.ExecuteToolRequest;
 import com.jujiu.agent.model.dto.response.ExecuteToolResponse;
 import com.jujiu.agent.model.dto.response.ToolResponse;
@@ -13,6 +14,9 @@ import org.springframework.stereotype.Service;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 /**
  * @author 17644
@@ -60,11 +64,11 @@ public class ToolServiceImpl implements ToolService {
             ToolResponse toolResponse = ToolResponse.builder()
                     .toolName(getDisplayName(tool.getName()))
                     .description(tool.getDescription())
-                    .parameters(parseParameters(tool.getDescription()))
+                    .parameters(convertToolParameters(tool.getParameters()))
                     .build();
             toolResponses.add(toolResponse);
         }
-        log.info("[工具列表] 返回 {} 个工具, {}", toolResponses.size(), toolResponses.toString());
+        log.info("[工具列表] 返回 {} 个工具", toolResponses.size());
         return toolResponses;
     }
 
@@ -84,10 +88,10 @@ public class ToolServiceImpl implements ToolService {
             return ExecuteToolResponse.builder()
                     .toolName(toolName)
                     .success(false)
-                    .errorMessage("工具不存在" + toolName)
+                    .errorMessage("工具不存在：" + toolName)
                     .build();
         }
-
+        
         try {
             // 2. 执行工具
             String result = tool.execute(parameters);
@@ -114,6 +118,8 @@ public class ToolServiceImpl implements ToolService {
                     .errorMessage(e.getMessage())
                     .build();
         }
+
+        
     }
     
     /**
@@ -133,36 +139,37 @@ public class ToolServiceImpl implements ToolService {
             case "calculator" -> "计算器";
             case "web_search" -> "网页搜索";
             case "translator" -> "翻译器";
+            case "time" -> "时间日期";
             default -> "未知工具";
         };
     }
 
     /**
      * 解析工具描述中的参数信息
-     *
      * 【设计目的】
      * 从工具描述中提取参数定义
-     * 这里简化处理，实际可以从数据库 tool 表的 parameters 字段读取
      *
-     * 【为什么简化处理？】
-     * - 保持简单，先跑通功能
-     * - 后续可以从数据库读取更规范的参数定义
      */
-    private List<ToolResponse.ParameterDefinition> parseParameters(String description) {
-        // 简化处理：返回一个通用参数定义
-        // TODO: 实际项目中应该从数据库或工具类的 getParameters() 方法获取
-        List<ToolResponse.ParameterDefinition> params = new ArrayList<>();
+    private List<ToolResponse.ParameterDefinition> convertToolParameters(
+            ToolDefinition.Parameters toolParams) {
+        if (toolParams == null || toolParams.getProperties() == null) {
+            return new ArrayList<>();
+        }
 
-        // 如果描述中包含 city 参数
-        if (description != null && description.contains("city")) {
+        List<ToolResponse.ParameterDefinition> params = new ArrayList<>();
+        List<String> required = toolParams.getRequired() != null ?toolParams.getRequired() : new ArrayList<>();
+
+        for (Map.Entry<String, ToolDefinition.Property> entry :
+                toolParams.getProperties().entrySet()) {
             params.add(ToolResponse.ParameterDefinition.builder()
-                    .name("city")
-                    .type("string")
-                    .required(true)
-                    .description("城市名称")
+                    .name(entry.getKey())
+                    .type(entry.getValue().getType())
+                    .required(required.contains(entry.getKey()))
+                    .description(entry.getValue().getDescription())
                     .build());
         }
 
         return params;
     }
+
 }

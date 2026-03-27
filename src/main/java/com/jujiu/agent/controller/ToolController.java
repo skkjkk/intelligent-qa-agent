@@ -10,6 +10,7 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -45,9 +46,8 @@ public class ToolController {
      * - 前端需要展示可用工具列表
      * - 用户可以了解系统能做什么
      *
-     * 【为什么不加 @PreAuthorize？】
-     * 工具列表是公开信息，不需要登录即可查看
-     * 但执行工具需要登录（对话需要用户上下文）
+     * 应该添加 @PreAuthorize 保护获取工具列表接口
+     * 因为执行工具可能消耗资源或调用付费 API
      */
     @Operation(summary = "获取工具列表", description = "获取所有可用的工具列表")
     @GetMapping("/list")
@@ -59,6 +59,7 @@ public class ToolController {
 
     @Operation(summary = "执行工具", description = "根据工具名称和参数执行工具")
     @PostMapping("/execute")
+    @PreAuthorize(value = "hasRole('USER')")  // 需要登录
     public Result<ExecuteToolResponse> executeTool(@RequestBody @Valid ExecuteToolRequest request) {
         log.info("[工具执行] 收到执行工具请求：toolName={}", request.getToolName());
 

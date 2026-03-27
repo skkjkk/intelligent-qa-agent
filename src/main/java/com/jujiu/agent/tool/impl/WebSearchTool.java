@@ -49,6 +49,14 @@ public class WebSearchTool extends AbstractTool {
                 "返回：搜索结果摘要和链接。";
     }
 
+    /**
+     * 执行工具
+     * 【参数验证】
+     * 子类应该在 execute() 中验证必填参数，返回错误信息而不是抛异常
+     *
+     * @param params 工具参数（如 {"city": "北京"}）
+     * @return 执行结果（成功或错误信息）
+     */
     @Override
     public String execute(Map<String, Object> params) {
         // 1. 获取搜索关键词
@@ -86,7 +94,7 @@ public class WebSearchTool extends AbstractTool {
                     .build()
                     .encode()
                     .toUri();
-            log.info("[网页搜索] 请求URL");
+            log.info("[网页搜索] 请求URL: {}", uri);      
             
             // 2. 发送请求
             @SuppressWarnings("unchecked")
@@ -133,9 +141,9 @@ public class WebSearchTool extends AbstractTool {
         // 2. 遍历结果集
         for (int i = 0; i < count; i++) {
             Map<String, Object> result = results.get(i);
-            String title = (String) result.get("title");
-            String snippet = (String) result.get("snippet");
-            String link = (String) result.get("link");
+            String title = (String) result.getOrDefault("title", "无标题");
+            String snippet = (String) result.getOrDefault("snippet", "无摘要");
+            String link = (String) result.getOrDefault("link", "无链接");
             
             // 3. 格式化结果
             sb.append(String.format("%d, %s\n摘要：%s\n链接：%s\n\n",
@@ -164,8 +172,6 @@ public class WebSearchTool extends AbstractTool {
         List<String> require = new ArrayList<>();
         require.add("query");
         parameters.setRequired(require);
-
-        log.info("parameters: {}", parameters);
         
         // 5. 返回参数定义对象
         return parameters;

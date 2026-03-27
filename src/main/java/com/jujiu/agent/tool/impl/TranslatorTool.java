@@ -132,26 +132,29 @@ public class TranslatorTool extends AbstractTool {
         } catch (InvalidUrlException e) {
             log.error("[翻译] 无效的 URL: {}", e.getMessage());
             throw new RuntimeException("无效的 URL: " + e.getMessage());
-        } catch (RestClientException e) {
+        } catch (RestClientException | NoSuchAlgorithmException e) {
             log.error("[翻译] 调用失败: {}", e.getMessage());
             throw new RuntimeException("百度翻译 API 调用失败: " + e.getMessage());
-        } catch (NoSuchAlgorithmException e) {
-            throw new RuntimeException(e);
-        }
+        } 
     }
 
     private String parseTranslationResult(Map<String, Object> response) {
         try {
             // 1. 检查错误码
             Object errorCodeObj = response.get("error_code");
-            if (errorCodeObj != null) {
-                String errorCode = errorCodeObj.toString();
-                if (!"0".equals(errorCode)) {
-                    String errorMsg = (String) response.get("error_msg");
-                    return "翻译失败：" + errorMsg;
-                }
+            String errorCode = null;
+            if (errorCodeObj instanceof Integer) {
+                errorCode = String.valueOf(errorCodeObj);
+            } else if (errorCodeObj instanceof String) {
+                errorCode = (String) errorCodeObj;
+                
             }
-
+            
+            if (errorCode != null && !"0".equals(errorCode)) {
+                String errorMsg = (String) response.get("error_msg");
+                return "翻译失败：" + errorMsg;
+            }
+            
             // 2. 获取翻译结果
             @SuppressWarnings("unchecked")
             List<Map<String, String>> transResult = 

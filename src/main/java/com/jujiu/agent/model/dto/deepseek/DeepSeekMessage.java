@@ -2,6 +2,7 @@ package com.jujiu.agent.model.dto.deepseek;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
 import io.swagger.v3.oas.annotations.media.Schema;
+import jakarta.validation.constraints.NotBlank;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
@@ -31,7 +32,8 @@ public class DeepSeekMessage {
      * 示例："user", "assistant"
      */
     @Schema(description = "角色类型", title = "消息发送者", example = "user")
-    private String role;
+    @NotBlank(message = "角色不能为空")
+    private MessageRole role;
 
     /**
      * 消息内容
@@ -68,9 +70,26 @@ public class DeepSeekMessage {
      */
     public static DeepSeekMessage toolMessage(String toolCallId, String content) {
         DeepSeekMessage message = new DeepSeekMessage();
-        message.setRole("tool");
+        message.setRole(MessageRole.TOOL);
         message.setToolCallId(toolCallId);
         message.setContent(content);
         return message;
+    }
+
+    public enum MessageRole {
+        USER("user"),
+        ASSISTANT("assistant"),
+        SYSTEM("system"),
+        TOOL("tool");
+
+        private final String value;
+
+        MessageRole(String value) {
+            this.value = value;
+        }
+
+        public String getValue() {
+            return value;
+        }
     }
 }

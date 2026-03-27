@@ -2,6 +2,7 @@ package com.jujiu.agent.config;
 
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.http.client.HttpComponentsClientHttpRequestFactory;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.http.converter.StringHttpMessageConverter;
 import org.springframework.web.client.RestTemplate;
@@ -20,17 +21,12 @@ public class AppConfig {
     
     @Bean
     public RestTemplate restTemplate() {
-        // 1. 使用更好的工厂类（推荐 HttpClient，但 Simple 也行，关键是传进去）
-        SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
-        factory.setConnectTimeout(3000);
-        factory.setReadTimeout(30000);
-
-        RestTemplate restTemplate = new RestTemplate(factory);
-
-        // 2. 解决和风天气 Gzip 压缩导致乱码/解析失败的问题
-        // 如果不加这个，即使 200 了，你拿到的 Map 也可能是空的或报错
-        restTemplate.getMessageConverters().add(0, new StringHttpMessageConverter(StandardCharsets.UTF_8));
-
-        return restTemplate;
+        HttpComponentsClientHttpRequestFactory factory =
+                new HttpComponentsClientHttpRequestFactory();
+        // 5秒连接超时
+        factory.setConnectTimeout(5000);
+        // 10秒读取超时
+        factory.setReadTimeout(10000);
+        return new RestTemplate(factory);
     }
 }
