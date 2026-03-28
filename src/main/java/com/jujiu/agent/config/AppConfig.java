@@ -18,15 +18,14 @@ import java.time.Duration;
  */
 @Configuration
 public class AppConfig {
-    
+
     @Bean
     public RestTemplate restTemplate() {
-        HttpComponentsClientHttpRequestFactory factory =
-                new HttpComponentsClientHttpRequestFactory();
-        // 5秒连接超时
-        factory.setConnectTimeout(5000);
-        // 10秒读取超时
-        factory.setReadTimeout(10000);
+        SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
+        // 10秒连接超时
+        factory.setConnectTimeout(10000);
+        // 120秒读取超时（AI处理需要较长时间）
+        factory.setReadTimeout(120000); 
         return new RestTemplate(factory);
     }
 }

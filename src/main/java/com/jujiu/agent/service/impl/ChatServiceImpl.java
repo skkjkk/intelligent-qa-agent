@@ -28,6 +28,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import reactor.core.publisher.Flux;
 
@@ -189,6 +190,7 @@ public class ChatServiceImpl implements ChatService {
     }
 
     @Override
+    @Transactional
     public ChatResponse sendMessage(Long userId, SendMessageRequest request) {
         log.info("[CHAT][SEND_MESSAGE] 收到发送消息请求 - userId={}, sessionId={}, messageLength={}", 
                 userId, request.getSessionId(), request.getMessage().length());
@@ -241,8 +243,7 @@ public class ChatServiceImpl implements ChatService {
                 .map(msg -> {
                     DeepSeekMessage deepSeekMessage = new DeepSeekMessage();
                     String roleStr = msg.getRole();
-                    DeepSeekMessage.MessageRole role = DeepSeekMessage.MessageRole.valueOf(roleStr.toUpperCase());
-                    deepSeekMessage.setRole(role);
+                    DeepSeekMessage.MessageRole role = DeepSeekMessage.MessageRole.fromValue(roleStr);                    deepSeekMessage.setRole(role);
                     deepSeekMessage.setContent(msg.getContent());
                     return deepSeekMessage;
                 }).toList());
@@ -285,7 +286,7 @@ public class ChatServiceImpl implements ChatService {
         
         // 5. 更新会话信息
         // 5.1 更新会话最后一条消息，截取前 50 个字符
-        session.setLastMessage(aiReply.substring(0, Math.min(aiReply.length(), 50)) + "...");
+        session.setLastMessage(aiReply.substring(0, Math.min(aiReply.length(), BusinessConstants.MAX_LAST_MESSAGE_PREVIEW)) + "...");
         // 5.2 更新会话消息数，增加 2 条消息（用户消息 + AI 回复）
         session.setMessageCount(session.getMessageCount() + 2);
         session.setUpdatedAt(LocalDateTime.now());
@@ -361,14 +362,16 @@ public class ChatServiceImpl implements ChatService {
         String key = RedisKeys.getChatRateKey(userId);
 
         Long count = redisTemplate.opsForValue().increment(key);
-
+        
+        int maxPerMinute = deepSeekProperties.getMaxMessagesPerMinute();
+        
         // 第一次：设置时间窗口过期
         if (count != null && count == 1) {
-            redisTemplate.expire(key, BusinessConstants.CHAT_RATE_WINDOW, TimeUnit.MILLISECONDS);
+            redisTemplate.expire(key, maxPerMinute, TimeUnit.MILLISECONDS);
         }
 
-        if (count != null && count >= BusinessConstants.CHAT_MAX_PER_MINUTE) {
-            log.error("用户 {} 创建会话频率过高", userId);
+        if (count != null && count > maxPerMinute) {
+            log.error("用户 {} 发送消息频率过高", userId);
             throw new BusinessException(ResultCode.CHAT_RATE_LIMIT_EXCEEDED);
         }
 
@@ -435,8 +438,7 @@ public class ChatServiceImpl implements ChatService {
         List<DeepSeekMessage> deepSeekMessages = new ArrayList<>(historyMessages.stream()
                 .map(msg -> {
                     DeepSeekMessage deepSeekMessage = new DeepSeekMessage();
-                    deepSeekMessage.setRole(DeepSeekMessage.MessageRole.valueOf(msg.getRole()));
-                    deepSeekMessage.setContent(msg.getContent());
+                    deepSeekMessage.setRole(DeepSeekMessage.MessageRole.fromValue(msg.getRole()));                    deepSeekMessage.setContent(msg.getContent());
                     return deepSeekMessage;
                 }).toList());
         
@@ -540,8 +542,9 @@ public class ChatServiceImpl implements ChatService {
 
                         // 更新会话最后一条消息预览和消息数量
                         log.info("[CHAT][SEND_MESSAGE_STREAM] 更新会话最后一条消息和消息数 - sessionId={}", request.getSessionId());
-                        session.setLastMessage(aiMessage.getContent().substring(0, Math.min(aiMessage.getContent().length(), 50)) + "...");
+                        session.setLastMessage(aiMessage.getContent().substring(0, Math.min(aiMessage.getContent().length(), BusinessConstants.MAX_LAST_MESSAGE_PREVIEW)) + "...");
                         session.setMessageCount(session.getMessageCount() + 2);
+                        session.setUpdatedAt(LocalDateTime.now());
                         sessionRepository.updateById(session);
                         log.info("[CHAT][SEND_MESSAGE_STREAM] AI 消息保存成功 - messageId={}, sessionId={}, completionTokens={}",
                                 aiMessage.getMessageId(), request.getSessionId(), completionTokens);

@@ -113,6 +113,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
             response.setContentType("application/json;charset=UTF-8");
             response.getWriter().write("{\"error\":\"Unauthorized\",\"message\":\"" + e.getMessage() + "\"}");
+            return;
         } finally {
             log.info("[SECURITY][FILTER] 请求处理完成 - uri={}, totalCostTime={}ms",
                     request.getRequestURI(), System.currentTimeMillis() - startTime);

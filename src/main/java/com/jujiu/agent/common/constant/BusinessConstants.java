@@ -17,29 +17,29 @@ public class BusinessConstants {
     // ==================== 时间限制（毫秒） ====================
 
     /**
-     * 登录失败锁定时间
+     * 登录失败锁定时间:10分钟
      */
-    public static final long LOGIN_FAIL_LOCK_TIME = 10 * 60 * 1000L; // 10分钟
+    public static final long LOGIN_FAIL_LOCK_TIME = 10 * 60 * 1000L; 
 
     /**
-     * 消息限流时间窗口
+     * 消息限流时间窗口:
      */
-    public static final long CHAT_RATE_WINDOW = 60 * 1000L; // 1分钟
+    public static final long CHAT_RATE_WINDOW = 60 * 1000L;
 
     /**
-     * 用户级Token失效时间
+     * 用户级Token失效时间:7天
      */
-    public static final long USER_LOGOUT_EXPIRE = 7 * 24 * 60 * 60 * 1000L; // 7天
+    public static final long USER_LOGOUT_EXPIRE = 7 * 24 * 60 * 60 * 1000L;
 
     /**
-     * 会话缓存 TTL
+     * 会话缓存 TTL:30分钟
      */
-    public static final long SESSION_CACHE_TTL = 30 * 60 * 1000L; // 30分钟
+    public static final long SESSION_CACHE_TTL = 30 * 60 * 1000L;
 
     /**
-     * 对话历史缓存 TTL
+     * 对话历史缓存 TTL:24小时  
      */
-    public static final long CONVERSATION_HISTORY_TTL = 24 * 60 * 60 * 1000L; // 24小时
+    public static final long CONVERSATION_HISTORY_TTL = 24 * 60 * 60 * 1000L; 
 
     // ==================== 次数限制 ====================
 
@@ -47,11 +47,7 @@ public class BusinessConstants {
      * 登录失败最大次数
      */
     public static final int LOGIN_FAIL_MAX_COUNT = 5;
-
-    /**
-     * 每用户每分钟最大消息数
-     */
-    public static final int CHAT_MAX_PER_MINUTE = 10;
+    
 
     // ==================== 消息限制 ====================
 

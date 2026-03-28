@@ -6,11 +6,17 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
+import org.springframework.web.cors.CorsConfiguration;
+import org.springframework.web.cors.CorsConfigurationSource;
+import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
+
+import java.util.Arrays;
 
 /**
  * Spring Security 安全配置
@@ -30,10 +36,38 @@ import org.springframework.security.web.authentication.UsernamePasswordAuthentic
 @Slf4j
 @Configuration
 @EnableWebSecurity
+@EnableMethodSecurity
 public class SecurityConfig {
 
     @Autowired
     private JwtAuthenticationFilter jwtAuthenticationFilter;
+
+    /**
+     * 配置 CORS（跨域资源共享）
+     * 
+     * 【为什么要配置 CORS？】
+     * 前后端分离项目中，前端和后端可能运行在不同的端口或域名下
+     * 浏览器默认不允许跨域请求，需要后端明确允许
+     */
+    @Bean
+    public CorsConfigurationSource corsConfigurationSource() {
+        CorsConfiguration configuration = new CorsConfiguration();
+        // 允许所有来源（生产环境建议限制为具体域名）
+        configuration.setAllowedOriginPatterns(Arrays.asList("*"));
+        // 允许的 HTTP 方法
+        configuration.setAllowedMethods(Arrays.asList("GET", "POST", "PUT", "DELETE", "OPTIONS"));
+        // 允许的请求头
+        configuration.setAllowedHeaders(Arrays.asList("*"));
+        // 是否允许携带凭证（Cookie）
+        configuration.setAllowCredentials(true);
+        // 预检请求的缓存时间
+        configuration.setMaxAge(3600L);
+        
+        UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
+        source.registerCorsConfiguration("/**", configuration);
+        log.info("[CORS] CORS 配置已加载，允许所有来源访问");
+        return source;
+    }
 
     /**
      * 配置 Spring Security 过滤器链，定义 HTTP 安全策略
@@ -54,14 +88,18 @@ public class SecurityConfig {
         
         // 配置安全策略
         http
-                // 1. 配置哪些路径允许匿名访问
+                // 1. 配置 CORS
+                .cors(cors -> cors.configurationSource(corsConfigurationSource()))
+
+                // 2. 配置哪些路径允许匿名访问
                 .authorizeHttpRequests(auth -> auth
                         // Swagger 相关接口放行
                         .requestMatchers("/swagger-ui/**", "/v3/api-docs/**", "swagger-ui.html").permitAll()
                         // 认证相关接口放行（登录/注册/刷新）
                         .requestMatchers("/api/v1/auth/login", "/api/v1/auth/register", "/api/v1/auth/refresh").permitAll()
                         // 工具接口放行（工具列表和执行都是公开的）
-                        .requestMatchers("/api/v1/tools/**").permitAll()
+                        .requestMatchers("/api/v1/tools/list").permitAll()
+                        .requestMatchers("/api/v1/tools/execute").authenticated()
                         // 放行错误页面，避免异步请求完成后被拦截
                         .requestMatchers("/error").permitAll()
                         // SSE 流式接口需要认证
@@ -70,24 +108,27 @@ public class SecurityConfig {
                         .anyRequest().authenticated()
                 )
 
-                // 2. 禁用 CSRF（前后端分离项目通常不需要）
+                // 3. 禁用 CSRF（前后端分离项目通常不需要）
                 .csrf(csrf -> csrf.disable())
 
-                // 3. 配置 Session 策略（使用 JWT，不需要 Session）
+                // 4. 配置 Session 策略（使用 JWT，不需要 Session）
                 .sessionManagement(session -> session
                         .sessionCreationPolicy(SessionCreationPolicy.STATELESS)
                 )
 
-                // 3.1 配置 SecurityContext 不要求显式保存（解决异步请求问题）
+                // 4.1 配置 SecurityContext 不要求显式保存（解决异步请求问题）
                 .securityContext(securityContext ->
                         securityContext.requireExplicitSave(false)
                 )
 
-                // 4. 配置异常处理，确保异步请求也能正确处理
+                // 5. 配置异常处理，确保异步请求也能正确处理
                 .exceptionHandling(exceptions -> exceptions
                         .authenticationEntryPoint((request, response, authException) -> {
                             // 检查是否是 SSE 请求
-                            if ("text/event-stream".equals(response.getContentType())) {
+                            String accept = request.getHeader("Accept");
+                            boolean isSseRequest = "/api/v1/chat/send/stream".equals(request.getRequestURI())
+                                    || (accept != null && accept.contains("text/event-stream"));
+                            if (isSseRequest) {
                                 log.warn("[SECURITY][ACCESS_DENIED] SSE 请求被拒绝 - uri={}", request.getRequestURI());
                                 response.setStatus(HttpServletResponse.SC_FORBIDDEN);
                                 return;
@@ -102,7 +143,9 @@ public class SecurityConfig {
 
                         .accessDeniedHandler((request, response, accessDeniedException) -> {
                             // 检查是否是 SSE 请求
-                            if ("text/event-stream".equals(response.getContentType())) {
+                            String accept = request.getHeader("Accept");
+                            boolean isSseRequest = "/api/v1/chat/send/stream".equals(request.getRequestURI());
+                            if (isSseRequest) {
                                 log.warn("[SECURITY][ACCESS_DENIED] SSE 访问被拒绝 - uri={}", request.getRequestURI());
                                 response.setStatus(HttpServletResponse.SC_FORBIDDEN);
                                 return;
@@ -116,7 +159,7 @@ public class SecurityConfig {
                         })
                 )
 
-                // 5. 添加 JWT 认证过滤器
+                // 6. 添加 JWT 认证过滤器
                 .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);
         return http.build();
     }

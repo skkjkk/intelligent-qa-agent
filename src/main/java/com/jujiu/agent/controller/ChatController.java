@@ -49,7 +49,7 @@ public class ChatController {
     }
 
     @Operation(summary = "创建会话", description = "创建新的对话会话")
-    @PostMapping("/session")
+    @PostMapping("/sessions")
     public Result<SessionResponse> createSession(@RequestBody @Valid CreateSessionRequest request) {
         Long userId = getCurrentUserId();
         SessionResponse response = chatService.createSession(userId, request);
@@ -75,7 +75,7 @@ public class ChatController {
     }
 
     @Operation(summary = "获取会话详情", description = "获取指定会话的所有消息记录")
-    @GetMapping("/session/{sessionId}")
+    @GetMapping("/sessions/{sessionId}")
     public Result<SessionDetailResponse> getSessionDetail(@PathVariable String sessionId){
         Long userId = getCurrentUserId();
         SessionDetailResponse sessionDetail = chatService.getSessionDetail(userId, sessionId);
@@ -84,7 +84,7 @@ public class ChatController {
     }
 
     @Operation(summary = "删除会话", description = "删除指定会话及其所有消息")
-    @DeleteMapping("/session/{sessionId}")
+    @DeleteMapping("/sessions/{sessionId}")
     public Result<Void> deleteSession(@PathVariable String sessionId){
         Long userId = getCurrentUserId();
         chatService.deleteSession(userId, sessionId);

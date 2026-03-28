@@ -39,7 +39,7 @@ public class AuthController {
     
     @Operation(summary = "用户登录", description = "用户登录接口")
     @PostMapping("/login")
-    public Result<LoginResponse> login(@RequestBody LoginRequest loginRequest) {
+    public Result<LoginResponse> login(@RequestBody @Valid LoginRequest loginRequest) {
         LoginResponse response = authService.login(loginRequest);
         return Result.success(response, "登录成功");
     }
@@ -60,7 +60,7 @@ public class AuthController {
 
     @Operation(summary = "用户退出", description = "用户退出接口")
     @PostMapping("/logout")
-    public Result<Void> logout(@RequestBody LogoutRequest logoutRequest) {
+    public Result<Void> logout(@RequestBody @Valid LogoutRequest logoutRequest) {
        authService.logout(logoutRequest);
         return Result.success(null,"退出成功");
     }

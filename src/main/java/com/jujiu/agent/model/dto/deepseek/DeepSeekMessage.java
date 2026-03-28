@@ -77,9 +77,16 @@ public class DeepSeekMessage {
     }
 
     public enum MessageRole {
+        @JsonProperty("user")
         USER("user"),
+
+        @JsonProperty("assistant")
         ASSISTANT("assistant"),
+
+        @JsonProperty("system")
         SYSTEM("system"),
+
+        @JsonProperty("tool")
         TOOL("tool");
 
         private final String value;
@@ -90,6 +97,21 @@ public class DeepSeekMessage {
 
         public String getValue() {
             return value;
+        }
+
+        /**
+         * 根据 value 值查找对应的枚举常量
+         * @param value 枚举的 value 值（如 "user", "assistant" 等）
+         * @return 对应的枚举常量
+         * @throws IllegalArgumentException 如果找不到匹配的枚举
+         */
+        public static MessageRole fromValue(String value) {
+            for (MessageRole role : values()) {
+                if (role.value.equals(value)) {
+                    return role;
+                }
+            }
+            throw new IllegalArgumentException("Invalid role value: " + value);
         }
     }
 }

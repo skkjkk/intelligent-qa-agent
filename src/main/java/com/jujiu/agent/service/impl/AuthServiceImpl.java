@@ -83,7 +83,11 @@ public class AuthServiceImpl implements AuthService {
         }
         
         // 验证密码（使用 Spring Security 的 BCryptPasswordEncoder）
-        if (!passwordEncoder.matches(loginRequest.getPassword().trim(), user.getPassword())) {
+        String rawPassword = loginRequest.getPassword();
+        if (rawPassword == null) {
+            throw new BusinessException(ResultCode.LOGIN_FAILED);
+        }
+        if (!passwordEncoder.matches(rawPassword.trim(), user.getPassword())) {
             log.warn("[AUTH][LOGIN] 密码错误 - userId={}, username={}, ip={}", 
                     user.getId(), user.getUsername(), getClientIp());
             // 密码错误，记录失败
