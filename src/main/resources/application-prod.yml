@@ -36,3 +36,12 @@ deepseek:
 weather:
   api:
     key: ${WEATHER_API_KEY:}  # 从环境变量读取，默认为空
+
+serpapi:
+  api:
+    key: ${SERPAPI_API_KEY:}
+
+baidu:
+  translate:
+    app-id: ${BAIDU_TRANSLATE_APP_ID:}
+    secret-key: ${BAIDU_TRANSLATE_APP_SECRET:}

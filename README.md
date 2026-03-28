@@ -1,4 +1,4 @@
-# 智能问答Agent系统
+﻿# 智能问答Agent系统
 
 > 基于Spring Boot的智能问答Agent系统后端API，支持Function Calling、工具调用、多轮对话
 
@@ -47,10 +47,10 @@
 
 - **工具接口模块**
   - 工具注册中心（ToolRegistry）
-  - 天气查询（OpenWeatherMap API）
+  - 天气查询（高德天气 API）
   - 通用工具执行接口
 
-- **Function Calling模块**（设计完成，待实现）
+- **Function Calling模块**
   - Agent智能工具调用
   - 工具自动识别与执行
   - 多轮工具调用循环
@@ -155,7 +155,7 @@ http://localhost:8080/swagger-ui.html
 
 | 接口 | 方法 | 说明 |
 |------|------|------|
-| `/sessions` | GET | 获取会话列表 |
+| `/sessionList` | GET | 获取会话列表 |
 | `/sessions` | POST | 创建新会话 |
 | `/sessions/{sessionId}` | GET | 获取会话详情 |
 | `/sessions/{sessionId}` | DELETE | 删除会话 |
@@ -166,7 +166,7 @@ http://localhost:8080/swagger-ui.html
 
 | 接口 | 方法 | 说明 |
 |------|------|------|
-| `/` | GET | 获取工具列表 |
+| `/list` | GET | 获取工具列表 |
 | `/execute` | POST | 执行指定工具 |
 
 ## 快速开始
@@ -210,10 +210,10 @@ deepseek:
   base-url: https://api.deepseek.com
   model: deepseek-chat
 
-weather:
-  api:
-    key: your-openweathermap-api-key
-    url: https://api.openweathermap.org
+amap:
+  weather:
+    key: your-amap-weather-key
+    url: https://restapi.amap.com/v3/weather/weatherInfo
 ```
 
 ### 4. 启动项目
@@ -270,12 +270,7 @@ public class NewsTool extends AbstractTool {
 }
 ```
 
-2. 在数据库 `tool` 表添加记录：
-
-```sql
-INSERT INTO tool (tool_name, display_name, description, class_name, status)
-VALUES ('news', '新闻查询', '查询最新新闻...', 'com.jujiu.agent.tool.impl.NewsTool', 1);
-```
+2. 在构造方法中通过 `ToolRegistry` 完成注册，不需要再向 `tool` 表写入记录。
 
 ### Function Calling（Agent模式）
 
@@ -299,7 +294,7 @@ VALUES ('news', '新闻查询', '查询最新新闻...', 'com.jujiu.agent.tool.i
 | 用户认证模块 | 完成 | 100% |
 | 对话管理模块 | 完成 | 100% |
 | 工具接口模块 | 完成 | 100% |
-| Function Calling | 设计完成 | 待实现 |
+| Function Calling | 完成 | 100% |
 | 记忆管理模块 | 待开发 | 0% |
 | 工作流模块 | 待开发 | 0% |
 | 单元测试 | 待开发 | 0% |
@@ -307,3 +302,5 @@ VALUES ('news', '新闻查询', '查询最新新闻...', 'com.jujiu.agent.tool.i
 ## 许可证
 
 Apache License 2.0
+
+

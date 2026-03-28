@@ -62,7 +62,8 @@ public class ToolServiceImpl implements ToolService {
         List<ToolResponse> toolResponses = new ArrayList<>();
         for (AbstractTool tool : toolRegistry.getAllTools()) {
             ToolResponse toolResponse = ToolResponse.builder()
-                    .toolName(getDisplayName(tool.getName()))
+                    .toolName(tool.getName())
+                    .displayName(getDisplayName(tool.getName()))
                     .description(tool.getDescription())
                     .parameters(convertToolParameters(tool.getParameters()))
                     .build();

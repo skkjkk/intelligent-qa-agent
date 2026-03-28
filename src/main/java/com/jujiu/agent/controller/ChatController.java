@@ -65,7 +65,7 @@ public class ChatController {
     }
 
     @Operation(summary = "获取会话列表", description = "获取当前用户的所有会话列表")
-    @GetMapping("/sessions")
+    @GetMapping("/sessionList")
     public Result<List<SessionResponse>> getSessionList(
             @RequestParam(required = false, defaultValue = "0") Integer page,
             @RequestParam(required = false, defaultValue = "10") Integer size) {
