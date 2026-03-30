@@ -133,9 +133,9 @@ public class SecurityConfig {
                                 response.setStatus(HttpServletResponse.SC_FORBIDDEN);
                                 return;
                             }
-                            
-                            log.error("[SECURITY][ACCESS_DENIED] 访问拒绝 - uri={}, error={}",
-                                    request.getRequestURI(), authException.getMessage());
+
+
+                            log.error("[SECURITY][ACCESS_DENIED] 访问拒绝 - uri={}", request.getRequestURI(), authException);
                             response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
                             response.setContentType("application/json;charset=UTF-8");
                             response.getWriter().write("{\"code\":401,\"message\":\"未授权访问\"}");
@@ -150,9 +150,8 @@ public class SecurityConfig {
                                 response.setStatus(HttpServletResponse.SC_FORBIDDEN);
                                 return;
                             }
-                            
-                            log.error("[SECURITY][ACCESS_DENIED] 访问被拒绝 - uri={}, error={}",
-                                    request.getRequestURI(), accessDeniedException.getMessage());
+
+                            log.error("[SECURITY][ACCESS_DENIED] 访问被拒绝 - uri={}", request.getRequestURI(), accessDeniedException);
                             response.setStatus(HttpServletResponse.SC_FORBIDDEN);
                             response.setContentType("application/json;charset=UTF-8");
                             response.getWriter().write("{\"code\":403,\"message\":\"访问被拒绝\"}");

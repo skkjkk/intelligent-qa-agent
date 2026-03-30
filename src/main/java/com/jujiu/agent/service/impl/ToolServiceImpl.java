@@ -71,7 +71,7 @@ public class ToolServiceImpl implements ToolService {
         String toolName = request.getToolName();
         Map<String, Object> parameters = request.getParameters();
 
-        log.info("[工具执行] 开始执行工具：name={}, params={}", toolName, parameters);
+        log.info("[工具执行] 开始执行工具：name={}", toolName);
         
         // 1. 从注册中心获取工具
         AbstractTool tool = toolRegistry.getImplementation(toolName);
@@ -89,7 +89,7 @@ public class ToolServiceImpl implements ToolService {
             String result = tool.execute(parameters);
             long executionTime = System.currentTimeMillis() - startTime;
 
-            log.info("[工具执行] 执行成功：name={}, time={}ms, result={}", toolName, executionTime, result);
+            log.info("[工具执行] 执行成功：name={}, time={}ms", toolName, executionTime);
 
             // 3. 返回结果
             return ExecuteToolResponse.builder()
@@ -114,20 +114,6 @@ public class ToolServiceImpl implements ToolService {
         
     }
     
-    /**
-     * 获取工具显示名称
-     */
-    private String getDisplayName(String name) {
-        return switch (name) {
-            case "weather" -> "天气查询";
-            case "calculator" -> "计算器";
-            case "web_search" -> "网页搜索";
-            case "translator" -> "翻译器";
-            case "time" -> "时间日期";
-            default -> "未知工具";
-        };
-    }
-
     /**
      * 解析工具描述中的参数信息
      * 【设计目的】
@@ -166,7 +152,7 @@ public class ToolServiceImpl implements ToolService {
             }
             return params;
         } catch (Exception e) {
-            log.error("[工具列表] 解析参数失败: json={}", parametersJson, e);
+            log.error("[工具列表] 解析参数失败", e);
             return new ArrayList<>();
         }
     }

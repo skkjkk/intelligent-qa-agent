@@ -50,8 +50,7 @@ public class GlobalExceptionHandler {
      */
     @ExceptionHandler(BusinessException.class)
     public Result handleBusinessException(BusinessException e) {
-        log.warn("[EXCEPTION][BUSINESS] 业务异常 - message={}, errorCode={}, errorMessage={}", 
-                e.getMessage(), e.getResultCode().getCode(), e.getResultCode().getMessage());
+        log.error("[EXCEPTION][SYSTEM] 系统异常 - type={}, message={}", e.getClass().getSimpleName(), e.getMessage(), e);
         return Result.fail(e.getResultCode());
     }
 
@@ -63,8 +62,7 @@ public class GlobalExceptionHandler {
      */
     @ExceptionHandler(Exception.class)
     public Result handleException(Exception e) {
-        log.error("[EXCEPTION][SYSTEM] 系统异常 - type={}, message={}, stackTrace={}", 
-                e.getClass().getSimpleName(), e.getMessage(), e.getStackTrace()[0]);
+        log.error("[EXCEPTION][SYSTEM] 系统异常 - type={}, message={}", e.getClass().getSimpleName(), e.getMessage(), e);
         return Result.fail(ResultCode.INTERNAL_ERROR);
     }
 

@@ -61,7 +61,7 @@ public class ToolController {
     @PostMapping("/execute")
     @PreAuthorize(value = "hasRole('USER')")  // 需要登录
     public Result<ExecuteToolResponse> executeTool(@RequestBody @Valid ExecuteToolRequest request) {
-        log.info("[工具执行] 收到执行工具请求：toolName={}", request.getToolName());
+        log.info("[工具执行] 收到执行工具请求");
 
         ExecuteToolResponse response = toolService.executeTool(request);
         

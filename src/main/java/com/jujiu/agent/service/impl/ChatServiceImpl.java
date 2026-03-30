@@ -25,6 +25,8 @@ import com.jujiu.agent.model.entity.Message;
 import com.jujiu.agent.model.entity.Session;
 import com.jujiu.agent.repository.MessageRepository;
 import com.jujiu.agent.repository.SessionRepository;
+import com.jujiu.agent.service.ChatPersistenceService;
+import com.jujiu.agent.service.ChatRateLimitService;
 import com.jujiu.agent.service.ChatService;
 import com.jujiu.agent.service.FunctionCallingService;
 import lombok.extern.slf4j.Slf4j;
@@ -62,9 +64,6 @@ public class ChatServiceImpl implements ChatService {
     
     @Autowired
     private DeepSeekProperties deepSeekProperties;
-
-    @Autowired
-    private StringRedisTemplate redisTemplate;
     
     @Autowired
     private FunctionCallingService functionCallingService;
@@ -74,22 +73,22 @@ public class ChatServiceImpl implements ChatService {
     
     @Autowired
     private ObjectMapper objectMapper;
-    
+
+    @Autowired
+    private ChatRateLimitService chatRateLimitService;
+
+    @Autowired
+    private ChatPersistenceService chatPersistenceService;
     /**
      * 生成会话ID：session_ + 雪花ID
      */
     private String generateSessionId(){
         return "session_" + IdUtil.getSnowflakeNextIdStr();
     }
-
-    /**
-     * 生成消息ID：message_ + 雪花ID
-     */
-    private String generateMessageId(){
-        return "message_" + IdUtil.getSnowflakeNextIdStr();
-    }
+    
 
     @Override
+    @Transactional
     public void deleteSession(Long userId, String sessionId) {
         log.info("[CHAT][DELETE_SESSION] 开始删除会话 - userId={}, sessionId={}", userId, sessionId);
 
@@ -105,10 +104,7 @@ public class ChatServiceImpl implements ChatService {
         }
         
         //  // 2. 删除该会话的所有消息
-        messageRepository.delete(
-                new LambdaQueryWrapper<Message>()
-                        .eq(Message::getSessionId, sessionId)
-        );
+        chatPersistenceService.deleteSessionMessages(sessionId);
         
         // 3. 删除会话
         sessionRepository.delete(
@@ -168,16 +164,24 @@ public class ChatServiceImpl implements ChatService {
     public List<SessionResponse> getSessionList(Long userId, Integer page, Integer size) {
         log.info("[CHAT][GET_SESSION_LIST] 请求获取会话列表 - userId={}, page={}, size={}", userId, page, size);
         
+        int pageNumber = page == null ? 0 : page;
+        int pageSize = size == null ? 10 : size;
+        
         // 默认值
-        if (page == null || page < 1) {
-            page = 1;
+        if (pageNumber < 0) {
+            throw new BusinessException(ResultCode.INVALID_PAGE_NUMBER);
         }
-        if (size == null || size < 1) {
-            size = 10;
+        if (pageSize <= 0) {
+            throw new BusinessException(ResultCode.INVALID_PAGE_SIZE);
+        }
+
+        if (pageSize > 100) {
+            pageSize = 100;
         }
         
+        long dbPageNumber = (long) pageNumber + 1;
         // 分页查询
-        Page<Session> pageParam = new Page<>(page, size);
+        Page<Session> pageParam = new Page<>(dbPageNumber, pageSize);
         Page<Session> pageResult = sessionRepository.selectPage(pageParam, new LambdaQueryWrapper<Session>()
                         .eq(Session::getUserId, userId)
                         .orderByDesc(Session::getCreatedAt)
@@ -205,104 +209,40 @@ public class ChatServiceImpl implements ChatService {
     public ChatResponse sendMessage(Long userId, SendMessageRequest request) {
         log.info("[CHAT][SEND_MESSAGE] 收到发送消息请求 - userId={}, sessionId={}, messageLength={}", 
                 userId, request.getSessionId(), request.getMessage().length());
+
+        ChatPrepareResult prepareResult = prepareChat(userId, request);
+        Session session = prepareResult.getSession();
+        Message message = prepareResult.getUserMessage();
+        List<DeepSeekMessage> deepSeekMessages = prepareResult.getDeepSeekMessages();
         
-        // 1.校验会话是否存在且是否属于该用户
-        Session session = sessionRepository.selectOne(
-                new LambdaQueryWrapper<Session>()
-                        .eq(Session::getSessionId, request.getSessionId())
-        );
-        
-        if (session == null || !session.getUserId().equals(userId)) {
-            log.error("[CHAT][SEND_MESSAGE] 会话不存在或无权限访问 - userId={}, sessionId={}", 
-                    userId, request.getSessionId());
-            throw new BusinessException(ResultCode.SESSION_NOT_FOUND);
-        }
-        // 限流检查
-        checkRateLimit(userId);
-        
-        // 2. 保存用户消息
-        Message message = Message.builder()
-                .messageId(generateMessageId())
-                .sessionId(request.getSessionId())
-                .role(BusinessConstants.ROLE_USER)
-                .content(request.getMessage())
-                .createdAt(LocalDateTime.now())
-                .build();
-        messageRepository.insert(message);
-        
-        log.info("[CHAT][MESSAGE_SAVED] 用户消息保存成功 - messageId={}, sessionId={}", 
-                message.getMessageId(), request.getSessionId());
-        
-        // 如果是第一条消息，自动生成标题
-        if (session.getMessageCount() == 0) {
-            String title = generateTitle(request.getMessage());
-            session.setTitle(title);
-            log.info("[CHAT][AUTO_TITLE] 为会话自动生成标题 - sessionId={}, title={}", 
-                    request.getSessionId(), title);
-        }
-        
-        // 3. 构建多轮上下文，调用DeepSeek
-        // 3.1 查询该会话最近N条消息，并按时间升序
-        List<Message> historyMessages = messageRepository.selectList(
-                new LambdaQueryWrapper<Message>()
-                        .eq(Message::getSessionId, request.getSessionId())
-                        .orderByAsc(Message::getCreatedAt)
-                        .last("limit " + deepSeekProperties.getMaxContextMessages())
-        );
-        // 3.2 转换为 DeepSeekMessage 列表
-        List<DeepSeekMessage> deepSeekMessages = new ArrayList<>(historyMessages.stream()
-                .map(msg -> {
-                    DeepSeekMessage deepSeekMessage = new DeepSeekMessage();
-                    String roleStr = msg.getRole();
-                    DeepSeekMessage.MessageRole role = DeepSeekMessage.MessageRole.fromValue(roleStr);                    deepSeekMessage.setRole(role);
-                    deepSeekMessage.setContent(msg.getContent());
-                    return deepSeekMessage;
-                }).toList());
-        
-        // 3.3 在列表最前面插入 system 消息
-        DeepSeekMessage systemMessage = new DeepSeekMessage();
-        systemMessage.setRole(DeepSeekMessage.MessageRole.SYSTEM);
-        systemMessage.setContent(deepSeekProperties.getSystemPrompt());
-        deepSeekMessages.add(0, systemMessage);
-        
+ 
         // 3.4 调用 DeepSeek可执行工具的接口获取回复
         log.info("[CHAT][DEEPSEEK_CALL] 开始调用 DeepSeek API - sessionId={}, contextSize={}", 
                 request.getSessionId(), deepSeekMessages.size());
-//        DeepSeekResult result = deepSeekClient.chat(deepSeekMessages);
+        
         DeepSeekResult result = functionCallingService.chatWithTools(deepSeekMessages);
         String aiReply = result.getReply();
+        
         log.info("[CHAT][DEEPSEEK_RESPONSE] DeepSeek 返回成功 - sessionId={}, totalTokens={}, promptTokens={}, completionTokens={}", 
                 request.getSessionId(), result.getTotalTokens(), result.getPromptTokens(), result.getCompletionTokens());
 
         // 回填用户消息的 token
-        message.setTokens(result.getPromptTokens());
-        messageRepository.updateById(message);
+        updateUserMessageTokens(message, result.getPromptTokens());
         
         log.debug("[CHAT][TOKEN_UPDATE] 用户消息 Token 更新成功 - messageId={}, promptTokens={}", 
                 message.getMessageId(), result.getPromptTokens());
         
         // 4. 保存 AI 回复
-        Message aiMessage = Message.builder()
-                .messageId(generateMessageId())
-                .sessionId(request.getSessionId())
-                .role(BusinessConstants.ROLE_ASSISTANT)
-                .content(aiReply)
-                .createdAt(LocalDateTime.now())
-                .tokens(result.getCompletionTokens())
-                .build();
-        messageRepository.insert(aiMessage);
-        
+        Message aiMessage = chatPersistenceService.saveAssistantMessage(
+                request.getSessionId(),
+                aiReply,
+                result.getCompletionTokens());
         log.info("[CHAT][AI_MESSAGE_SAVED] AI 消息保存成功 - messageId={}, sessionId={}, tokens={}", 
                 aiMessage.getMessageId(), request.getSessionId(), result.getCompletionTokens());
         
         // 5. 更新会话信息
-        // 5.1 更新会话最后一条消息，截取前 50 个字符
-        session.setLastMessage(aiReply.substring(0, Math.min(aiReply.length(), BusinessConstants.MAX_LAST_MESSAGE_PREVIEW)) + "...");
-        // 5.2 更新会话消息数，增加 2 条消息（用户消息 + AI 回复）
-        session.setMessageCount(session.getMessageCount() + 2);
-        session.setUpdatedAt(LocalDateTime.now());
-        sessionRepository.updateById(session);
-                
+        chatPersistenceService.updateSessionAfterReply(session, aiReply, 2);
+        
         log.info("[CHAT][SESSION_UPDATED] 会话信息更新成功 - sessionId={}, totalRounds={}, lastMessageLength={}", 
                 request.getSessionId(), session.getMessageCount() / 2, session.getLastMessage().length());
 
@@ -369,25 +309,120 @@ public class ChatServiceImpl implements ChatService {
         return result.getReply();
     }
 
-    private void checkRateLimit(Long userId) {
-        String key = RedisKeys.getChatRateKey(userId);
-
-        Long count = redisTemplate.opsForValue().increment(key);
-        
-        int maxPerMinute = deepSeekProperties.getMaxMessagesPerMinute();
-        
-        // 第一次：设置时间窗口过期
-        if (count != null && count == 1) {
-            redisTemplate.expire(key, maxPerMinute, TimeUnit.MILLISECONDS);
-        }
-
-        if (count != null && count > maxPerMinute) {
-            log.error("用户 {} 发送消息频率过高", userId);
-            throw new BusinessException(ResultCode.CHAT_RATE_LIMIT_EXCEEDED);
-        }
-
+    private List<Message> loadHistoryMessages(String sessionId) {
+        return messageRepository.selectList(
+                new LambdaQueryWrapper<Message>()
+                        .eq(Message::getSessionId, sessionId)
+                        .orderByAsc(Message::getCreatedAt)
+                        .last("limit " + deepSeekProperties.getMaxContextMessages())
+        );
     }
 
+    private List<DeepSeekMessage> buildChatContext(List<Message> historyMessages) {
+        List<DeepSeekMessage> deepSeekMessages = new ArrayList<>(historyMessages.stream()
+                .map(msg -> {
+                    DeepSeekMessage deepSeekMessage = new DeepSeekMessage();
+                    DeepSeekMessage.MessageRole role =
+                            DeepSeekMessage.MessageRole.fromValue(msg.getRole());
+                    deepSeekMessage.setRole(role);
+
+                    String content = msg.getContent();
+                    if (role == DeepSeekMessage.MessageRole.TOOL) {
+                        deepSeekMessage.setContent(content != null && !content.isEmpty() ?
+                                content : "工具执行结果为空");
+                    } else {
+                        deepSeekMessage.setContent((content == null || content.isEmpty()) ?
+                                null : content);
+                    }
+
+                    if (msg.getToolCalls() != null && !msg.getToolCalls().isEmpty()) {
+                        try {
+                            List<ToolCallDTO> toolCalls = objectMapper.readValue(
+                                    msg.getToolCalls(),
+                                    new TypeReference<List<ToolCallDTO>>() {}
+                            );
+                            deepSeekMessage.setToolCalls(toolCalls);
+                        } catch (Exception e) {
+                            log.warn("[CHAT] 解析历史消息 tool_calls 失败 - messageId={}",
+                                    msg.getMessageId(), e);
+                        }
+                    }
+
+                    if (msg.getToolCallId() != null && !msg.getToolCallId().isEmpty()) {
+                        deepSeekMessage.setToolCallId(msg.getToolCallId());
+                    }
+
+                    return deepSeekMessage;
+                }).toList());
+        
+        DeepSeekMessage systemMessage = new DeepSeekMessage();
+        systemMessage.setRole(DeepSeekMessage.MessageRole.SYSTEM);
+        systemMessage.setContent(deepSeekProperties.getSystemPrompt());
+        deepSeekMessages.add(0, systemMessage);
+
+        return deepSeekMessages;
+    }
+
+    private ChatPrepareResult prepareChat(Long userId, SendMessageRequest request) {
+        // 1. 校验会话是否存在且属于当前用户
+        Session session = sessionRepository.selectOne(
+                new LambdaQueryWrapper<Session>()
+                        .eq(Session::getSessionId, request.getSessionId())
+        );
+
+        if (session == null || !session.getUserId().equals(userId)) {
+            throw new BusinessException(ResultCode.SESSION_NOT_FOUND);
+        }
+        
+        // 2. 执行限流检查，防止 API 调用频率过高
+        chatRateLimitService.checkChatRateLimit(userId);
+
+        // 3. 保存用户消息
+        Message userMessage = chatPersistenceService.saveUserMessage(request.getSessionId(),
+                request.getMessage());
+
+        // 4. 如果是会话的第一条消息，自动生成会话标题
+        if (session.getMessageCount() == 0) {
+            String title = generateTitle(request.getMessage());
+            session.setTitle(title);
+            sessionRepository.updateById(session);
+        }
+
+        // 5. 查询历史消息，构建多轮对话上下文
+        List<Message> historyMessages = loadHistoryMessages(request.getSessionId());
+        
+        // 6. 构建多轮对话上下文
+        List<DeepSeekMessage> deepSeekMessages = buildChatContext(historyMessages);
+
+        return new ChatPrepareResult(session, userMessage, deepSeekMessages);
+    }
+
+
+    private static class ChatPrepareResult {
+        private final Session session;
+        private final Message userMessage;
+        private final List<DeepSeekMessage> deepSeekMessages;
+
+        private ChatPrepareResult(Session session, Message userMessage, List<DeepSeekMessage>
+                deepSeekMessages) {
+            this.session = session;
+            this.userMessage = userMessage;
+            this.deepSeekMessages = deepSeekMessages;
+        }
+
+        public Session getSession() {
+            return session;
+        }
+
+        public Message getUserMessage() {
+            return userMessage;
+        }
+
+        public List<DeepSeekMessage> getDeepSeekMessages() {
+            return deepSeekMessages;
+        }
+    }
+    
     /**
      * 发送消息（流式响应）
      * 处理用户的聊天请求，通过 SSE 方式实时返回 AI 的流式响应内容。
@@ -404,99 +439,10 @@ public class ChatServiceImpl implements ChatService {
         // 1. 创建 SseEmitter，设置 3 分钟超时时间
         SseEmitter emitter = new SseEmitter(BusinessConstants.SSE_TIMEOUT);
         
-        // 2. 校验会话是否存在且属于当前用户
-        Session session = sessionRepository.selectOne(
-                new LambdaQueryWrapper<Session>()
-                        .eq(Session::getSessionId, request.getSessionId())
-        );
-        if (session == null || !session.getUserId().equals(userId)) {
-            log.error("[CHAT][SEND_MESSAGE_STREAM] 会话不存在 - sessionId={}", request.getSessionId());
-            throw new BusinessException(ResultCode.SESSION_NOT_FOUND);
-        }
-        
-        // 3. 执行限流检查，防止 API 调用频率过高
-        checkRateLimit(userId);
-        
-        // 4. 保存用户发送的消息到数据库
-        Message message = Message.builder()
-                .messageId(generateMessageId())
-                .sessionId(request.getSessionId())
-                .role(BusinessConstants.ROLE_USER)
-                .content(request.getMessage())
-                .createdAt(LocalDateTime.now())
-                .build();
-        messageRepository.insert(message);
-        
-        log.info("[CHAT][SEND_MESSAGE_STREAM] 用户消息保存成功 - messageId={}, sessionId={}",
-                message.getMessageId(), request.getSessionId());
-        
-        // 5. 如果是会话的第一条消息，自动生成会话标题
-        if (session.getMessageCount() == 0) {
-            session.setTitle(generateTitle(request.getMessage()));
-            
-            // 5.1 更新会话标题
-            sessionRepository.updateById(session);
-            
-            log.info("[CHAT][SEND_MESSAGE_STREAM] 会话第一次消息，自动生成标题 - sessionId={}, title={}",
-                    request.getSessionId(), session.getTitle());
-        }
-        
-        // 6. 查询历史消息，构建多轮对话上下文
-        // 先查询所有消息按时间正序
-        List<Message> allMessages = messageRepository.selectList(
-                new LambdaQueryWrapper<Message>()
-                        .eq(Message::getSessionId, request.getSessionId())
-                        .orderByAsc(Message::getCreatedAt)
-        );
-
-        // 如果消息数超过限制，只取最新的 N 条
-        List<Message> historyMessages;
-        int maxMessages = deepSeekProperties.getMaxContextMessages();
-        if (allMessages.size() > maxMessages) {
-            historyMessages = allMessages.subList(allMessages.size() - maxMessages, allMessages.size());
-        } else {
-            historyMessages = allMessages;
-        }
-        
-        // 7. 将历史消息转换为 DeepSeek API 所需的消息格式
-        List<DeepSeekMessage> deepSeekMessages = new ArrayList<>(historyMessages.stream()
-                .map(msg -> {
-                    DeepSeekMessage deepSeekMessage = new DeepSeekMessage();
-                    deepSeekMessage.setRole(DeepSeekMessage.MessageRole.fromValue(msg.getRole()));
-                    String content = msg.getContent();
-
-                    // tool 消息的 content 不能为 null 或空字符串，必须有内容
-                    if ("tool".equals(msg.getRole())) {
-                        deepSeekMessage.setContent(content != null && !content.isEmpty() ? content : "工具执行结果为空");
-                    } else {
-                        // assistant/user 消息：空字符串转为 null
-                        deepSeekMessage.setContent((content == null || content.isEmpty()) ? null : content);
-                    }
-
-                    // 恢复tool_calls
-                    if (msg.getToolCalls() != null && !msg.getToolCalls().isEmpty()) {
-                        try {
-                            List<ToolCallDTO> toolCalls = objectMapper.readValue(
-                                    msg.getToolCalls(),
-                                    new TypeReference<List<ToolCallDTO>>() {}
-                            );
-                            deepSeekMessage.setToolCalls(toolCalls);
-                        } catch (Exception e) {
-                            log.warn("[CHAT] 解析历史消息tool_calls失败 - messageId={}", msg.getMessageId(), e);
-                        }
-                    }
-                    // 恢复tool_call_id
-                    if (msg.getToolCallId() != null && !msg.getToolCallId().isEmpty()) {
-                        deepSeekMessage.setToolCallId(msg.getToolCallId());
-                    }
-                    return deepSeekMessage;
-                }).toList());
-        
-        // 在消息列表开头添加系统提示词，设定 AI 角色和行为准则
-        DeepSeekMessage systemMessage = new DeepSeekMessage();
-        systemMessage.setRole(DeepSeekMessage.MessageRole.SYSTEM);
-        systemMessage.setContent(deepSeekProperties.getSystemPrompt());
-        deepSeekMessages.add(0, systemMessage);
+        ChatPrepareResult prepareResult = prepareChat(userId, request);
+        Session session = prepareResult.getSession();
+        Message message = prepareResult.getUserMessage();
+        List<DeepSeekMessage> deepSeekMessages = prepareResult.getDeepSeekMessages();
 
         // 提交到线程池
         chatExecutor.submit(() -> {
@@ -517,62 +463,30 @@ public class ChatServiceImpl implements ChatService {
                 );
 
                 // 8. 保存所有中间消息（包括带tool_calls的assistant消息和tool消息）
-                for (DeepSeekMessage msg : result.getMessagesToSave()) {
-                    // 判断是assistant消息（有tool_calls）还是tool消息（有toolCallId）
-                    if (msg.getToolCalls() != null && !msg.getToolCalls().isEmpty()) {
-                        // 这是带 tool_calls 的 assistant 消息，需要保存
-                        Message toolCallMessage = Message.builder()
-                                .messageId(generateMessageId())
-                                .sessionId(request.getSessionId())
-                                .role(msg.getRole().getValue())
-                                .content(msg.getContent())   // ← 直接传，null就是null，DeepSeek允许tool_calls消息content为null
-                                .toolCalls(objectMapper.writeValueAsString(msg.getToolCalls()))
-                                .createdAt(LocalDateTime.now())
-                                .tokens(0)  // 中间消息不统计token
-                                .build();
-                        messageRepository.insert(toolCallMessage);
-                    } else if (msg.getToolCallId() != null) {
-                        // 保存tool消息（工具返回结果）
-                        Message toolMessage = Message.builder()
-                                .messageId(generateMessageId())
-                                .sessionId(request.getSessionId())
-                                .role(msg.getRole().getValue())
-                                .content(msg.getContent())
-                                .toolCallId(msg.getToolCallId())  // 保存tool_call_id
-                                .createdAt(LocalDateTime.now())
-                                .tokens(0)
-                                .build();
-                        messageRepository.insert(toolMessage);
-                    }
-                }
+                chatPersistenceService.saveIntermediateMessages(request.getSessionId(), result.getMessagesToSave());
                 
-                // 8. 流结束，保存AI信息
+                // 9. 流结束，保存AI信息
                 log.info("[CHAT][SEND_MESSAGE_STREAM] 流结束，保存ai信息 - sessionId={}", request.getSessionId());
 
-                // 8.1 构建 AI 消息
-                Message aiMessage = Message.builder()
-                        .messageId(generateMessageId())
-                        .sessionId(request.getSessionId())
-                        .role(BusinessConstants.ROLE_ASSISTANT)
-                        .content(result.getFinalReply())
-                        .createdAt(LocalDateTime.now())
-                        .tokens(result.getCompletionTokens())
-                        .build();
-
-                messageRepository.insert(aiMessage);
-                log.info("[CHAT][SEND_MESSAGE_STREAM] AI消息保存成功 - messageId={}, sessionId={}, role={}, content={}, createdAt={}, tokens={}",
-                        aiMessage.getMessageId(), request.getSessionId(), aiMessage.getRole(), aiMessage.getContent(), aiMessage.getCreatedAt(), aiMessage.getTokens());
+                // 9.1 构建 AI 消息
+                Message aiMessage = chatPersistenceService.saveAssistantMessage(
+                        request.getSessionId(),
+                        result.getFinalReply(),
+                        result.getCompletionTokens());
+                log.info("[CHAT][SEND_MESSAGE_STREAM] AI消息保存成功 - messageId={}, sessionId={}, role={}, createdAt={}, tokens={}, contentLength={}",
+                        aiMessage.getMessageId(),
+                        request.getSessionId(),
+                        aiMessage.getRole(),
+                        aiMessage.getCreatedAt(),
+                        aiMessage.getTokens(),
+                        aiMessage.getContent() == null ? 0 : aiMessage.getContent().length());
                 
-                // 9. 回填用户消息的promptTokens
-                message.setTokens(result.getPromptTokens());
-                messageRepository.updateById(message);
-
+                // 9.2 回填用户消息的promptTokens
+                updateUserMessageTokens(message, result.getPromptTokens());
+                
                 // 10. 更新会话
-                session.setLastMessage(result.getFinalReply().substring(0, Math.min(result.getFinalReply().length(), BusinessConstants.MAX_LAST_MESSAGE_PREVIEW)) + "...");
-                session.setMessageCount(session.getMessageCount() + 2);
-                session.setUpdatedAt(LocalDateTime.now());
-                sessionRepository.updateById(session);
-
+                chatPersistenceService.updateSessionAfterReply(session, result.getFinalReply(), 2);
+                
                 // 11. 发送done事件
                 emitter.send(SseEmitter.event()
                         .name("done")
@@ -587,5 +501,10 @@ public class ChatServiceImpl implements ChatService {
             }
         });
         return emitter;
+    }
+
+    private void updateUserMessageTokens(Message message, Integer promptTokens) {
+        message.setTokens(promptTokens);
+        messageRepository.updateById(message);
     }
 }

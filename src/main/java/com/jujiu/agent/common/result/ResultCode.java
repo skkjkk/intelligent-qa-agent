@@ -83,6 +83,15 @@ public enum ResultCode {
     OLD_PASSWORD_WRONG(1009, "旧密码不正确"),
 
     /**
+     * 无效的页大小
+     */
+    INVALID_PAGE_SIZE(1010, "无效的页大小"),
+    /**
+     * 无效的页码
+     */
+    INVALID_PAGE_NUMBER(1011, "无效的页码"),
+
+    /**
      * 会话不存在或无权限
      */
     SESSION_NOT_FOUND(2001, "会话不存在或无权限"),
@@ -97,7 +106,7 @@ public enum ResultCode {
      * DeepSeek API 响应消息格式异常
      */
     DEEPSEEK_API_RETURN_FORMAT_ERROR(3002, "DeepSeek API 返回的消息格式异常"),
-    
+
     /**
      * 函数调用最大次数 exceeded
      */
@@ -107,9 +116,14 @@ public enum ResultCode {
      */
     CHAT_RATE_LIMIT_EXCEEDED(3003, "发送消息过于频繁，请稍后再试"),
     /**
+     * 限流配置非法
+     */
+    RATE_LIMIT_CONFIG_INVALID(3004, "限流配置非法"),
+    /**
      * 服务器内部错误
      */
     INTERNAL_ERROR(5000, "服务器内部错误"),
+    
     ;
 
     /**

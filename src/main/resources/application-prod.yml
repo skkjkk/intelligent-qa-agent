@@ -31,6 +31,7 @@ deepseek:
   model: deepseek-chat
   max-context-messages: 10
   max-messages-per-minute: 10       # 生产环境严格限流
+  rate-limit-window-seconds: 60
   system-prompt: "你是一个智能助手"
   
 weather:

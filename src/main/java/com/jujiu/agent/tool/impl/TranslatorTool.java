@@ -106,8 +106,8 @@ public class TranslatorTool extends AbstractTool {
             headers.setContentType(MediaType.APPLICATION_FORM_URLENCODED);
             
             HttpEntity<LinkedMultiValueMap<String, String>> request = new HttpEntity<>(formData, headers);
-            
-            log.info("[翻译] 开始调用百度翻译 API - text={}, from={}, to={}", text, from, to);
+
+            log.info("[翻译] 开始调用百度翻译 API - from={}, to={}", from, to);
 
             // 4. 发送请求
             @SuppressWarnings("unchecked")

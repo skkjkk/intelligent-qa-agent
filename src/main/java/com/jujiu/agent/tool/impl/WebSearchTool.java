@@ -52,7 +52,7 @@ public class WebSearchTool extends AbstractTool {
     public String execute(Map<String, Object> params) {
         // 1. 获取搜索关键词
         String query = (String) params.get("query");
-        log.info("搜索关键词为: {}", query);
+        log.info("[网页搜索] 收到搜索请求");
         
         // 2. 参数校验
         if (query == null || query.isEmpty()) {
@@ -85,7 +85,6 @@ public class WebSearchTool extends AbstractTool {
                     .build()
                     .encode()
                     .toUri();
-            log.info("[网页搜索] 请求URL: {}", uri);      
             
             // 2. 发送请求
             @SuppressWarnings("unchecked")

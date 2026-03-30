@@ -63,8 +63,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         }
         
         long startTime = System.currentTimeMillis();
-        log.info("[SECURITY][FILTER] 开始处理请求 - method={}, uri={}, ip={}",
-                request.getMethod(), request.getRequestURI(), request.getRemoteAddr());
+        log.info("[SECURITY][FILTER] 开始处理请求 - method={}, uri={}", request.getMethod(), request.getRequestURI());
 
         try {
             // 1. 从请求头中获取 JWT token

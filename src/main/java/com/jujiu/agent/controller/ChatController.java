@@ -6,7 +6,6 @@ import com.jujiu.agent.model.dto.request.SendMessageRequest;
 import com.jujiu.agent.model.dto.response.ChatResponse;
 import com.jujiu.agent.model.dto.response.SessionDetailResponse;
 import com.jujiu.agent.model.dto.response.SessionResponse;
-import com.jujiu.agent.security.JwtTokenProvider;
 import com.jujiu.agent.service.ChatService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -21,6 +20,7 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.io.IOException;
 import java.util.List;
+import java.util.Map;
 
 /**
  * @author 17644
@@ -101,13 +101,14 @@ public class ChatController {
             log.debug("[流式消息] SSE 连接已建立，sessionId={}", request.getSessionId());
             return emitter;
         } catch (Exception e) {
-            log.error("[流式消息] 流式发送失败，错误：{}", e.getMessage(), e);
+            log.error("[流式消息] 流式发送失败", e);
             // 创建一个立即返回错误的 SseEmitter
             SseEmitter errorEmitter = new SseEmitter();
             try {
+                String errorMessage = e.getMessage() != null ? e.getMessage() : "流式消息处理失败";
                 errorEmitter.send(SseEmitter.event()
                         .name("error")
-                        .data("{" + "error" + ":" + "" + e.getMessage() + "" + "}"));
+                        .data(Map.of("error", errorMessage)));
                 errorEmitter.complete();
             } catch (IOException ex) {
                 // 忽略

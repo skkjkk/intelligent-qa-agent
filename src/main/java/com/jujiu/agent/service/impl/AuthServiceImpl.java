@@ -54,8 +54,7 @@ public class AuthServiceImpl implements AuthService {
     
     @Override
     public LoginResponse login(LoginRequest loginRequest) {
-        log.info("[AUTH][LOGIN] 收到登录请求 - username={}, ip={}",
-                loginRequest.getUsername(), getClientIp());
+        log.info("[AUTH][LOGIN] 收到登录请求 - ip={}", getClientIp());
 
         String failKey = RedisKeys.getLoginFailKey(loginRequest.getUsername());
 
@@ -63,8 +62,7 @@ public class AuthServiceImpl implements AuthService {
         String failCountStr = redisTemplate.opsForValue().get(failKey);
         failCountStr = failCountStr == null ? "0" : failCountStr;
         if (Integer.parseInt(failCountStr) >= BusinessConstants.LOGIN_FAIL_MAX_COUNT) {
-            log.warn("[AUTH][LOGIN] 登录失败次数过多，账号已被临时锁定 - username={}, failCount={}", 
-                    loginRequest.getUsername(), failCountStr);
+            log.warn("[AUTH][LOGIN] 登录失败次数过多，账号已被临时锁定 - failCount={}", failCountStr);
             throw new BusinessException(ResultCode.LOGIN_TOO_MANY);
         }
         
@@ -75,8 +73,7 @@ public class AuthServiceImpl implements AuthService {
         );
         
         if (user == null) {
-            log.warn("[AUTH][LOGIN] 用户不存在 - username={}, ip={}", 
-                    loginRequest.getUsername(), getClientIp());
+            log.warn("[AUTH][LOGIN] 用户不存在 - ip={}", getClientIp());
             // 用户不存在，也算一次失败
             recordFailAttempt(failKey);
             throw new BusinessException(ResultCode.USER_NOT_FOUND);
@@ -88,8 +85,7 @@ public class AuthServiceImpl implements AuthService {
             throw new BusinessException(ResultCode.LOGIN_FAILED);
         }
         if (!passwordEncoder.matches(rawPassword.trim(), user.getPassword())) {
-            log.warn("[AUTH][LOGIN] 密码错误 - userId={}, username={}, ip={}", 
-                    user.getId(), user.getUsername(), getClientIp());
+            log.warn("[AUTH][LOGIN] 密码错误 - ip={}", getClientIp());
             // 密码错误，记录失败
             recordFailAttempt(failKey);
             // 密码错误，保存登录日志
@@ -105,11 +101,9 @@ public class AuthServiceImpl implements AuthService {
         // 登录成功，清除失败记录
         redisTemplate.delete(failKey);
                 
-        log.info("[AUTH][LOGIN_SUCCESS] 登录成功 - userId={}, username={}, ip={}", 
-                user.getId(), user.getUsername(), getClientIp());
-        
-        log.debug("[AUTH][TOKEN_GEN] 开始生成 Access Token 和 Refresh Token - userId={}, username={}", 
-                user.getId(), user.getUsername());
+        log.info("[AUTH][LOGIN_SUCCESS] 登录成功 - ip={}", getClientIp());
+
+        log.debug("[AUTH][TOKEN_GEN] 开始生成 Access Token 和 Refresh Token - userId={}", user.getId());
         
         // 生成访问令牌
         String accessToken = jwtTokenProvider.generateAccessToken(
@@ -125,8 +119,8 @@ public class AuthServiceImpl implements AuthService {
                 user.getRole()
         );
         
-        log.info("[AUTH][LOGIN_COMPLETE] 登录流程完成 - userId={}, username={}, tokenType=Bearer, expiresIn={}s", 
-                user.getId(), user.getUsername(), jwtTokenProvider.getAccessTokenExpiration());
+        log.info("[AUTH][LOGIN_COMPLETE] 登录流程完成 - userId={}, tokenType=Bearer, expiresIn={}s", 
+                user.getId(), jwtTokenProvider.getAccessTokenExpiration());
         
         // 返回登录响应
         return LoginResponse.builder()
@@ -139,8 +133,7 @@ public class AuthServiceImpl implements AuthService {
 
     @Override
     public LoginResponse register(RegisterRequest registerRequest) {
-        log.info("[AUTH][REGISTER] 收到注册请求 - username={}, email={}, nickname={}", 
-                registerRequest.getUsername(), registerRequest.getEmail(), registerRequest.getNickname());
+        log.info("[AUTH][REGISTER] 收到注册请求");
         
         // 1. 检查用户名是否已存在
         User existUser = userRepository.selectOne(
@@ -148,7 +141,7 @@ public class AuthServiceImpl implements AuthService {
                         .eq(User::getUsername, registerRequest.getUsername())
         );
         if (existUser != null) {
-            log.warn("[AUTH][REGISTER] 用户名已被注册 - username={}", registerRequest.getUsername());
+            log.warn("[AUTH][REGISTER] 用户名已被注册");
             throw new BusinessException(ResultCode.USERNAME_EXISTS);
         }
 
@@ -158,7 +151,7 @@ public class AuthServiceImpl implements AuthService {
                         .eq(User::getEmail, registerRequest.getEmail())
         );
         if (existEmail != null) {
-            log.warn("[AUTH][REGISTER] 邮箱已被注册 - email={}", registerRequest.getEmail());
+            log.warn("[AUTH][REGISTER] 邮箱已被注册");
             throw new BusinessException(ResultCode.EMAIL_EXISTS);
         }
 
@@ -192,8 +185,7 @@ public class AuthServiceImpl implements AuthService {
         );
 
         // 7. 返回登录响应
-        log.info("[AUTH][REGISTER_COMPLETE] 注册流程完成 - userId={}, username={}, email={}", 
-                newUser.getId(), newUser.getUsername(), newUser.getEmail());
+        log.info("[AUTH][REGISTER_COMPLETE] 注册流程完成 - userId={}", newUser.getId());
         
         return LoginResponse.builder()
                 .accessToken(accessToken)
@@ -266,10 +258,8 @@ public class AuthServiceImpl implements AuthService {
 
         // 3. 生成新的 Access Token
         String newAccessToken = jwtTokenProvider.generateAccessToken(userId, username, role);
-        
-        log.info("[AUTH][REFRESH_TOKEN_SUCCESS] Token 刷新成功 - userId={}, username={}, role={}", 
-                userId, username, role);
 
+        log.info("[AUTH][REFRESH_TOKEN_SUCCESS] Token 刷新成功 - userId={}, role={}", userId, role);
         // 4. 返回新的访问令牌和刷新令牌
         return LoginResponse.builder()
                 .accessToken(newAccessToken)
@@ -281,9 +271,7 @@ public class AuthServiceImpl implements AuthService {
 
     @Override
     public void logout(LogoutRequest logoutRequest) {
-        log.info("[AUTH][LOGOUT] 收到退出请求 - tokenPrefix={}", 
-                logoutRequest.getToken() != null && logoutRequest.getToken().length() > 10 
-                        ? logoutRequest.getToken().substring(0, 10) + "..." : "null");
+        log.info("[AUTH][LOGOUT] 收到退出请求");
         String logoutRequestToken = logoutRequest.getToken();
         
         // 验证刷新令牌的有效性
@@ -333,9 +321,8 @@ public class AuthServiceImpl implements AuthService {
                 .role(user.getRole())
                 .createdAt(user.getCreatedAt())
                 .build();
-        
-        log.info("[AUTH][GET_USER_INFO_SUCCESS] 获取用户信息成功 - userId={}, username={}, email={}", 
-                user.getId(), user.getUsername(), user.getEmail());
+
+        log.info("[AUTH][GET_USER_INFO_SUCCESS] 获取用户信息成功 - userId={}", user.getId());
         
         return response;
     }
@@ -361,8 +348,7 @@ public class AuthServiceImpl implements AuthService {
         user.setPassword(passwordEncoder.encode(changePasswordRequest.getNewPassword()));
         userRepository.updateById(user);
 
-        log.info("[AUTH][CHANGE_PASSWORD_SUCCESS] 密码修改成功 - userId={}, username={}",
-                userId, user.getUsername());
+        log.info("[AUTH][CHANGE_PASSWORD_SUCCESS] 密码修改成功 - userId={}", userId);
 
         // 4. 将该用户加入黑名单（使该用户所有 token 失效）
         redisTemplate.opsForValue().set(

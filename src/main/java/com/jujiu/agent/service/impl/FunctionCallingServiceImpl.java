@@ -198,7 +198,7 @@ public class FunctionCallingServiceImpl implements FunctionCallingService {
             return result;
         } catch (Exception e) {
 
-            log.error("[FUNCTION_CALLING] 工具执行失败 - name={}, error={}", toolName, e.getMessage(), e);
+            log.error("[FUNCTION_CALLING] 工具执行失败 - name={}, error={}", toolName, e.getMessage());
             return "错误：工具执行失败 - " + e.getMessage();
         }
     }

@@ -4,6 +4,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * @author 17644
@@ -15,6 +16,8 @@ public class ThreadPoolConfig {
 
     @Bean(name = "chatExecutor")
     public ExecutorService chatExecutor() {
+        // 线程计数器
+        AtomicInteger atomicInteger = new AtomicInteger();
         return new ThreadPoolExecutor(
                 // 核心线程数：同时处理 4 个聊天
                 4,
@@ -29,7 +32,8 @@ public class ThreadPoolConfig {
                     @Override
                     public Thread newThread(Runnable r) {
                         Thread thread = new Thread(r);
-                        int count = 1;
+                        // 线程名：chat-stream-1
+                        int count = atomicInteger.getAndIncrement();
                         thread.setName("chat-stream-" + (++count));
                         thread.setDaemon(true);  // 守护线程，不阻止 JVM 退出
                         return thread;

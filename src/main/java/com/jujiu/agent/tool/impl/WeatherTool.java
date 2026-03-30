@@ -55,8 +55,7 @@ public class WeatherTool extends AbstractTool {
             return "错误：缺少必填参数 city（城市名称或 adcode）";
         }
 
-        log.info("[天气查询] 城市 = {}, apiKey配置 = {}",
-                city, apiKey != null && !apiKey.isEmpty() ? "已配置" : "未配置");
+        log.info("[天气查询] 收到天气查询请求");
 
         if (apiKey == null || apiKey.isEmpty() || apiUrl == null || apiUrl.isEmpty()) {
             log.warn("[天气查询] 未配置完整的 API Key 或 URL，返回模拟数据");

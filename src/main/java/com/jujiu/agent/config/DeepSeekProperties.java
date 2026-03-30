@@ -53,6 +53,13 @@ public class DeepSeekProperties {
      * 用于控制 API 调用的频率限制
      */
     private int maxMessagesPerMinute;
+
+    /**
+     * 限流窗口时间
+     * 用于设置限流窗口的大小
+     * 默认：60 秒
+     */
+    private int rateLimitWindowSeconds;
     
     /**
      * 系统提示
@@ -68,4 +75,6 @@ public class DeepSeekProperties {
      * 默认：0.7
      */
     private Double temperature = 0.7;
+    
+    
 }

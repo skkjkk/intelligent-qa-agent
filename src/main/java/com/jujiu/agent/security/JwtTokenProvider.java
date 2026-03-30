@@ -108,9 +108,8 @@ public class JwtTokenProvider {
                 .signWith(getSecretKey(), Jwts.SIG.HS256)
                 // 生成 JWT 令牌字符串构建并返回令牌，
                 .compact();
-            
-        log.info("[JWT][TOKEN_GENERATED] Token 生成成功 - userId={}, username={}, tokenPrefix={}", 
-                userId, username, token != null && token.length() > 10 ? token.substring(0, 10) + "..." : "unknown");
+
+        log.info("[JWT][TOKEN_GENERATED] Token 生成成功 - userId={}, username={}", userId, username);
             
         return token;
     }
@@ -165,14 +164,12 @@ public class JwtTokenProvider {
      * @return 如果令牌有效返回 true，否则返回 false
      */
     public boolean validateToken(String token) {
-        log.debug("[JWT][TOKEN_VALIDATION] 开始验证 Token - tokenPrefix={}", 
-                token != null && token.length() > 10 ? token.substring(0, 10) + "..." : "null");
+        log.debug("[JWT][TOKEN_VALIDATION] 开始验证 Token");
     
         // 1. 检查是否在黑名单
         String blacklistKey = RedisKeys.getTokenBlacklistKey(token);
         if (redisTemplate.hasKey(blacklistKey)) {
-            log.warn("[JWT][TOKEN_VALIDATION] Token 已在黑名单中 (用户主动退出) - tokenPrefix={}",
-                    token != null && token.length() > 10 ? token.substring(0, 10) + "..." : "null");
+            log.warn("[JWT][TOKEN_VALIDATION] Token 已在黑名单中");
             return false;
         }
 
@@ -182,12 +179,11 @@ public class JwtTokenProvider {
             return false;
         }
 
-        // 2. 【新增】检查用户是否被全局拉黑（修改密码时用）
+        // 2. 检查用户是否被全局拉黑（修改密码时用）
         try {
             Long userId = getUserId(token);
             if (Boolean.TRUE.equals(redisTemplate.hasKey(RedisKeys.getUserLogoutKey(userId)))) {
-                log.warn("[JWT][TOKEN_VALIDATION] Token 已失效 (用户已修改密码) - userId={}, tokenPrefix={}",
-                        userId, token.substring(0, 10) + "...");
+                log.warn("[JWT][TOKEN_VALIDATION] Token 已失效 (用户已修改密码) - userId={}", userId);
                 return false;
             }
         } catch (Exception e) {
@@ -209,8 +205,7 @@ public class JwtTokenProvider {
             log.debug("[JWT][TOKEN_VALIDATION] Token 验证通过 - userId={}, username={}", userId, username);
             return true;
         } catch (Exception e) {
-            log.error("[JWT][TOKEN_VALIDATION] Token 验证异常 - reason={}, tokenPrefix={}", 
-                    e.getMessage(), token != null && token.length() > 10 ? token.substring(0, 10) + "..." : "null");
+            log.warn("[JWT][TOKEN_VALIDATION] Token 校验失败 - reason={}", e.getMessage());
             return false;
         }
     }

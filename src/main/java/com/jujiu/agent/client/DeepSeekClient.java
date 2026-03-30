@@ -276,7 +276,8 @@ public class DeepSeekClient {
     }
     
     public DeepSeekResult chatWithTools(List<DeepSeekMessage> messages, List<ToolDefinition> tools) {
-        log.info("[DEEPSEEK][CHAT_WITH_TOOLS] 开始对话 - messages={}, tools={}", messages, tools);
+        log.info("[DEEPSEEK][CHAT_WITH_TOOLS] 开始对话 - messageCount={}, toolCount={}",
+                messages.size(), tools.size());
         
         // 1. 构建请求参数
         DeepSeekRequest request = new DeepSeekRequest();
@@ -284,8 +285,9 @@ public class DeepSeekClient {
         request.setTools(tools);
         request.setMessages(messages);
         request.setTemperature(deepSeekProperties.getTemperature());
-        
-        log.debug("[DEEPSEEK][CHAT_WITH_TOOLS] 请求参数 - request={}", request);
+
+        log.debug("[DEEPSEEK][CHAT_WITH_TOOLS] 请求参数构建完成 - messageCount={}, toolCount={}",
+                messages.size(), tools.size());
         
         // 2. 构建请求头
         HttpHeaders headers = new HttpHeaders();
