@@ -2,6 +2,14 @@
 
 > 基于Spring Boot的智能问答Agent系统后端API，支持Function Calling、工具调用、多轮对话
 
+## 文档导航
+
+- 文档总入口：`docs/README.md`
+- 需求基线：`docs/02-requirements/需求规格说明书.md`
+- 架构基线：`docs/03-architecture/系统架构设计.md`
+- 接口基线：`docs/04-api/API接口定义文档.md`
+- 运维检查：`docs/05-operations/环境配置检查清单.md`
+
 ## 项目信息
 
 | 项目 | 说明 |
@@ -66,12 +74,14 @@
 ```
 intelligent-qa-agent/
 ├── docs/                              # 项目文档
-│   ├── requirements/                  # 需求文档（8个）
-│   ├── design/                        # 设计文档（3个）
-│   ├── guide/                         # 学习指南（5个）
-│   ├── 项目状态快照.md
-│   ├── 项目开发全记录.md
-│   └── Function Calling实现方案.md
+│   ├── README.md                      # 文档总导航
+│   ├── 01-overview/                   # 项目概览
+│   ├── 02-requirements/               # 需求基线
+│   ├── 03-architecture/               # 架构与设计基线
+│   ├── 04-api/                        # API基线
+│   ├── 05-operations/                 # 环境与运维文档
+│   ├── 06-maintenance/                # 审查与维护文档
+│   └── archive/                       # 历史方案与过程资料
 ├── sql/                               # SQL脚本
 │   └── init.sql                       # 数据库初始化脚本
 ├── src/main/java/com/jujiu/agent/

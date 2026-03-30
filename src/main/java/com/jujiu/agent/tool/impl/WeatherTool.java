@@ -34,25 +34,19 @@ public class WeatherTool extends AbstractTool {
     @Value("${amap.weather.url:}")
     private String apiUrl;
 
-    public WeatherTool(RestTemplate restTemplate, ToolRegistry toolRegistry) {
+    public WeatherTool(RestTemplate restTemplate) {
         SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
         factory.setConnectTimeout(3000);
         factory.setReadTimeout(5000);
         this.restTemplate = new RestTemplate(factory);
-        toolRegistry.register(this);
+    
     }
 
     @Override
     public String getName() {
         return "weather";
     }
-
-    @Override
-    public String getDescription() {
-        return "查询指定城市的当前天气情况。"
-                + "参数：city（必填，城市名称或 adcode，如“杭州”或“330100”）。"
-                + "返回：天气状况、温度、湿度、风向风力、发布时间等信息。";
-    }
+    
 
     @Override
     public String execute(Map<String, Object> params) {
@@ -134,26 +128,6 @@ public class WeatherTool extends AbstractTool {
             log.error("[天气查询] 高德天气请求失败: {}", e.getMessage(), e);
             return "天气查询失败：" + e.getMessage();
         }
-    }
-
-    @Override
-    public ToolDefinition.Parameters getParameters() {
-        ToolDefinition.Parameters parameters = new ToolDefinition.Parameters();
-        parameters.setType("object");
-
-        ToolDefinition.Property property = new ToolDefinition.Property();
-        property.setType("string");
-        property.setDescription("城市名称或 adcode，如“杭州”或“330100”");
-
-        Map<String, ToolDefinition.Property> properties = new HashMap<>();
-        properties.put("city", property);
-        parameters.setProperties(properties);
-
-        List<String> required = new ArrayList<>();
-        required.add("city");
-        parameters.setRequired(required);
-
-        return parameters;
     }
 
     private String getMockWeather(String city) {

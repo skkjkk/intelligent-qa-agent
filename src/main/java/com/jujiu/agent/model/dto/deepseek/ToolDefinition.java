@@ -30,7 +30,7 @@ public class ToolDefinition {
         
         // 参数定义
         @NotBlank(message = "参数定义不能为空")
-        private Parameters parameters;
+        private Map<String, Object> parameters;
     }
 
     @Data

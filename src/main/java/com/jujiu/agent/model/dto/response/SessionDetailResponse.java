@@ -74,5 +74,11 @@ public class SessionDetailResponse {
          */
         @Schema(description = "时间戳", title = "消息发送时间", example = "2026-03-22 11:28:30")
         private LocalDateTime timestamp;
+
+        /**
+         * 工具调用信息（JSON字符串）
+         */
+        @Schema(description = "工具调用信息", title = "tool_calls JSON字符串")
+        private String toolCalls;
     }
 }

@@ -1,9 +1,15 @@
 package com.jujiu.agent.tool;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.jujiu.agent.model.entity.Tool;
+import com.jujiu.agent.repository.ToolRepository;
 import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.ApplicationContext;
 import org.springframework.stereotype.Component;
 
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
@@ -35,109 +41,107 @@ import java.util.concurrent.ConcurrentHashMap;
 @Slf4j
 public class ToolRegistry {
 
-    /**
-     * 工具注册表
-     * Key：工具名称
-     * Value：工具实例
-     */
-    private final Map<String, AbstractTool> toolRegistry = new ConcurrentHashMap<>();
+    @Autowired
+    private ApplicationContext applicationContext;
 
+    @Autowired
+    private ToolRepository toolRepository;
+
+    @Autowired
+    private ObjectMapper objectMapper;
+    
+    // 缓存：工具名称 -> 实现实例
+    private final Map<String, AbstractTool> toolImplementations  = new ConcurrentHashMap<>();
+
+    // 缓存：工具名称 -> 数据库配置
+    private final Map<String, Tool> toolConfigs = new ConcurrentHashMap<>();
+    
+    // 启动时加载
+    @PostConstruct
+    public void init() {
+        log.info("[TOOL_REGISTRY] 开始初始化...");
+        // 1. 扫描所有代码实现的工具
+        scanCodeImplementations();
+        log.info("[TOOL_REGISTRY] 代码实现扫描完成，数量: {}", toolImplementations.size());
+        // 2. 加载数据库配置，并校验一致性
+        loadDatabaseConfig();
+        log.info("[TOOL_REGISTRY] 数据库配置加载完成");
+    }
 
     /**
-     * 注册工具
-     * 【设计目的】
-     * 将工具注册到注册表中，供后续查找使用
-     * 【为什么要 public？】
-     * 子类工具的 @PostConstruct 或构造函数会调用此方法
-     * 【为什么不在构造函数直接put？】
-     * 因为子类构造时，父类可能还没完全初始化
-     * 用单独的 register() 方法更安全
+     * 加载数据库配置，校验与代码实现的一致性
      */
-    public void register(AbstractTool tool) {
-        if (tool == null || tool.getName() == null) {
-            log.warn("工具注册失败，工具为空或名称为空: tool={}", tool);
-            return;
+    private void loadDatabaseConfig() {
+        List<Tool> dbTools = toolRepository.selectList(null);
+        
+        for (Tool dbTool : dbTools) {
+            String className = dbTool.getClassName();
+            AbstractTool implementation  = toolImplementations.get(className);
+            
+            if (implementation == null) {
+                // 数据库配了，但代码没实现 -> 严重错误，启动失败
+                log.error("[TOOL_REGISTRY] 数据库配置了未实现的工具: className={}, toolName={}",
+                        className, dbTool.getToolName());
+                throw new IllegalStateException("工具配置错误: " + dbTool.getToolName() +
+                        " 的实现类 " + className + " 不存在");
+            }
+
+            // 校验名称一致性
+            if (!implementation.getName().equals(dbTool.getToolName())) {
+                log.warn("[TOOL_REGISTRY] 工具名称不一致: 数据库={}, 代码实现={}, className={}",
+                        dbTool.getToolName(), implementation.getName(), className);
+            }
+            
+            toolConfigs.put(dbTool.getToolName(), dbTool);
+            log.info("[TOOL_REGISTRY] 加载工具配置: {} [status={}]",
+                    dbTool.getToolName(), dbTool.getStatus());
         }
-
-        String toolName = tool.getName();
-        toolRegistry.put(toolName, tool);
-        log.info("[工具注册] 已注册工具：name={}, class={}", toolName, tool.getClass().getSimpleName());
+        
     }
 
     /**
-     * 获取指定名称的工具
-     *
-     * 【设计目的】
-     * 调用者根据工具名称查找对应的工具实例
-     *
-     * 【找不到怎么办？】
-     * 返回 null，由调用者决定如何处理
+     * 扫描代码中所有 AbstractTool 实现
      */
-    public AbstractTool getTool(String name) {
-        return toolRegistry.get(name);
-    }
-
-    /**
-     * 获取所有已注册的工具
-     *
-     * 【设计目的】
-     * 用于 /tools 接口，返回给前端展示所有可用工具
-     */
-    public List<AbstractTool> getAllTools() {
-        return List.copyOf(toolRegistry.values());
-    }
-
-    /**
-     * 检查是否存在指定名称的工具
-     *
-     * 【设计目的】
-     * 调用者在执行工具之前，先检查工具是否存在
-     */
-    public boolean hasTool(String name) {
-        return toolRegistry.containsKey(name);
+    private void scanCodeImplementations() {
+        Map<String, AbstractTool> beans = applicationContext.getBeansOfType(AbstractTool.class);
+        for (AbstractTool tool : beans.values()) {
+            String className = tool.getClass().getName();
+            // 用className作为Key，工具实例作为Value
+            toolImplementations.put(className, tool);
+            log.info("[TOOL_REGISTRY] 扫描到工具实现: {} -> {}", className, tool.getName());
+        }
     }
     
     /**
-     * 获取已注册的工具数量
-     *
-     * 【设计目的】
-     * 用于快速了解当前已注册的工具数量
+     * 获取启用的工具列表（供 FunctionCallingService 使用）
      */
-    public int getToolCount() {
-        return toolRegistry.size();
+    public List<Tool> getEnabledTools() {
+        List<Tool> enabled = new ArrayList<>();
+        for (Tool tool : toolConfigs.values()) {
+            if (tool.getStatus() != null && tool.getStatus() == 1) {
+                enabled.add(tool);
+            }
+        }
+        return enabled;
     }
 
     /**
-     * 初始化完成后的回调
-     *
-     * 【@PostConstruct 注解的作用】
-     * 在 Bean 初始化完成后（构造函数执行 + 依赖注入完成后）自动调用
-     * 此时所有工具都已经注册完毕
-     *
-     * 【设计目的】
-     * 打印注册汇总日志，方便调试和确认
+     * 根据工具名称获取实现
      */
-    @PostConstruct
-    public void onInit(){
-        log.info("================= 工具注册完成 =================");
-        log.info("[工具初始化] 已注册工具数量：{}", toolRegistry.size());
-        for (String name : toolRegistry.keySet()) {
-            AbstractTool tool = toolRegistry.get(name);
-            log.info("  - {}: {}", name, tool.getDescription());
+    public AbstractTool getImplementation(String toolName) {
+        Tool config = toolConfigs.get(toolName);
+        if (config == null || config.getStatus() == 0) {
+            // 不存在或被禁用
+            return null; 
         }
-        log.info("==============================================");
+        return toolImplementations.get(config.getClassName());
     }
 
     /**
-     * 卸载工具
-     *
-     * @param name 工具名称
+     * 刷新配置（供管理接口调用）
      */
-    public void unregister(String name) {
-        AbstractTool removed = toolRegistry.remove(name);
-        if (removed != null) {
-            log.info("[工具注册] 已卸载工具：name={}", name);
-        }
+    public void refresh() {
+        toolConfigs.clear();
+        loadDatabaseConfig();
     }
-
 }

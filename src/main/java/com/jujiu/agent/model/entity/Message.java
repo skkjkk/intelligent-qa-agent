@@ -1,6 +1,7 @@
 package com.jujiu.agent.model.entity;
 
 import com.baomidou.mybatisplus.annotation.IdType;
+import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
 import io.swagger.v3.oas.annotations.media.Schema;
@@ -65,10 +66,26 @@ public class Message {
      */
     @Schema(description = "Token数量", title = "AI消息时的token消耗", example = "150")
     private Integer tokens;
+    
+    /**
+     * 工具调用列表（AI assistant 角色时，记录 tool_calls）
+     */
+    @TableField("tool_calls")
+    @Schema(description = "工具调用列表", title = "AI调用的工具记录")
+    // 存 JSON 字符串
+    private String toolCalls;
 
+    /**
+     * 工具调用ID（role为tool时使用）
+     */
+    @TableField("tool_call_id")
+    @Schema(description = "工具调用ID", title = "关联的tool_call_id")
+    private String toolCallId;
+    
     /**
      * 创建时间
      */
     @Schema(description = "创建时间", title = "消息发送时间", example = "2026-03-22 10:27:30")
     private LocalDateTime createdAt;
+    
 }

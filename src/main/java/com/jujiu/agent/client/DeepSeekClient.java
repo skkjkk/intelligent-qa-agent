@@ -344,6 +344,96 @@ public class DeepSeekClient {
         );
     }
 
+    public Flux<ToolStreamChunk> chatStreamWithTools(
+            List<DeepSeekMessage> messages,
+            List<ToolDefinition> tools) {
+
+        // 1. 构建请求体
+        DeepSeekRequest request = new DeepSeekRequest();
+        request.setMessages(messages);
+        request.setModel(deepSeekProperties.getModel());
+        request.setTools(tools);
+        request.setStream(true);
+        request.setTemperature(deepSeekProperties.getTemperature());
+
+        // 添加详细日志：打印所有消息
+        log.info("[DEEPSEEK][STREAM_WITH_TOOLS] 发送请求 - messageCount={}, toolCount={}", messages.size(), tools.size());
+        for (int i = 0; i < messages.size(); i++) {
+            DeepSeekMessage msg = messages.get(i);
+            String contentPreview = msg.getContent() != null ? (msg.getContent().length() > 100 ? msg.getContent().substring(0, 100) + "..." : msg.getContent()) : "null";
+            log.debug("[DEEPSEEK][STREAM_WITH_TOOLS] Message[{}] - role={}, content={}, hasToolCalls={}, toolCallId={}",
+                i, msg.getRole(), contentPreview,
+                msg.getToolCalls() != null && !msg.getToolCalls().isEmpty(),
+                msg.getToolCallId());
+        }
+
+        // 2. 使用 WebClient 发送请求并获取流式响应
+        return webClientConfig.webClientBuilder().build()
+                .post()
+                .uri(deepSeekProperties.getBaseUrl() + "/chat/completions")
+                .header("Authorization", "Bearer " + deepSeekProperties.getApiKey())
+                .header("Content-Type", "application/json")
+                .bodyValue(request)
+                .retrieve()
+                .bodyToFlux(String.class)
+                .filter(line -> line != null && !line.isEmpty())
+                .map(line -> {
+                    try {
+                        // 去掉 "data: " 前缀
+                        String data = line.startsWith("data: ") ? line.substring(6) : line;
+
+                        // 检查是否为[DONE]
+                        if (BusinessConstants.SSE_DONE.equals(data)) {
+                            // 如果是[DONE]，返回结束块
+                            return ToolStreamChunk.end("stop", null);
+                        }
+
+                        // 解析 JSON
+                        StreamResponse response = objectMapper.readValue(data, StreamResponse.class);
+                        if (response == null || response.getChoices() == null || response.getChoices().isEmpty()) {
+                            // 解析失败或结构异常，返回空内容块
+                            return ToolStreamChunk.delta(null, null, null);
+                        }
+
+                        // 获取第一个choice
+                        StreamResponse.StreamChoice choice = response.getChoices().get(0);
+                        if (choice == null) {
+                            return ToolStreamChunk.delta(null, null, null);
+                        }
+
+                        // 获取delta内容和工具调用增量
+                        StreamResponse.StreamDelta delta = choice.getDelta();
+
+                        String content = null;
+                        List<StreamResponse.StreamToolCallDelta> toolCalls = null;
+
+                        if (delta != null) {
+                            content = delta.getContent();
+                            toolCalls = delta.getToolCalls();
+                        }
+
+                        if (response.getUsage() != null) {
+                            // 如果有usage，返回结束块
+                            return ToolStreamChunk.end(choice.getFinishReason(), response.getUsage());
+                        }
+
+                        return ToolStreamChunk.delta(content, toolCalls, choice.getFinishReason());
+
+                    } catch (Exception e) {
+                        log.error("[DEEPSEEK][STREAM_WITH_TOOLS_PARSE_ERROR] 流式工具响应解析失败 - line={}", line, e);
+                        return ToolStreamChunk.delta(null, null, null);
+                    }
+                })
+                // 过滤掉内容和工具调用都为空的块，保留有实际内容或工具调用的块，以及结束块
+                .filter(chunk -> 
+                        chunk != null && (chunk.isEnd() 
+                                || (chunk.getContent() != null && !chunk.getContent().isEmpty()) 
+                                || (chunk.getToolCalls() != null && !chunk.getToolCalls().isEmpty()) 
+                        )
+                );
+    }
+    
+    
     /**
      * 流式响应内部类
      */
@@ -389,10 +479,16 @@ public class DeepSeekClient {
         @NoArgsConstructor
         @AllArgsConstructor
         public static class StreamDelta {
+            
             // 角色
             private String role;
+            
             // 内容
             private String content;
+            
+            // 工具调用
+            @JsonProperty("tool_calls")
+            private List<StreamToolCallDelta> toolCalls;
         }
 
         /**
@@ -409,8 +505,45 @@ public class DeepSeekClient {
             @JsonProperty("total_tokens")
             private Integer totalTokens;
         }
-    }
 
+        /**
+         * 工具调用增量内部类
+         */
+        @Data
+        @NoArgsConstructor
+        @AllArgsConstructor
+        public static class StreamToolCallDelta {
+            
+            // 工具调用索引
+            private Integer index;
+
+            // 工具调用ID
+            private String id;
+
+            // 工具调用类型
+            private String type;
+
+            // 工具调用函数
+            private StreamFunctionDelta function;
+        }
+        
+        /**
+         * 函数调用增量内部类
+         */
+        @Data
+        @NoArgsConstructor
+        @AllArgsConstructor
+        public static class StreamFunctionDelta{
+            // 函数名称
+            private String name;
+            
+            // 函数参数
+            private String arguments;
+        }
+    }
+    
+    
+    
     /**
      * 流式响应结果包装类
      * 包含内容和可选的 token 用量信息
@@ -429,6 +562,37 @@ public class DeepSeekClient {
 
         public static StreamResult end(StreamResponse.StreamUsage usage) {
             return new StreamResult(null, usage, true);
+        }
+    }
+    
+    @Data
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class ToolStreamChunk{
+        // 普通文本增量
+        private String content;
+
+        // 工具调用增量
+        private List<StreamResponse.StreamToolCallDelta> toolCalls;
+
+        // 本次返回的结束原因
+        private String finishReason;
+
+        // token 统计，只会在结束块里有值
+        private StreamResponse.StreamUsage usage;
+
+        // 是否为结束块
+        private boolean end;
+
+        public static ToolStreamChunk delta(String content, 
+                                            List<StreamResponse.StreamToolCallDelta> toolCalls, 
+                                            String finishReason) {
+            return new ToolStreamChunk(content, toolCalls, finishReason, null, false);
+        }
+        
+        public static ToolStreamChunk end(String finishReason, 
+                                          StreamResponse.StreamUsage usage) {
+            return new ToolStreamChunk(null, null, finishReason, usage, true);
         }
     }
 }

@@ -40,8 +40,7 @@ public class TranslatorTool extends AbstractTool {
     @Value("${baidu.translate.secret-key:}")
     private String secretKey;
 
-    public TranslatorTool(ToolRegistry toolRegistry, RestTemplate restTemplate) {
-        toolRegistry.register(this);
+    public TranslatorTool(RestTemplate restTemplate) {
         this.restTemplate = restTemplate;
     }
 
@@ -50,12 +49,6 @@ public class TranslatorTool extends AbstractTool {
         return "translator";
     }
 
-    @Override
-    public String getDescription() {
-        return "多语言翻译工具，支持中英日韩等多种语言互译。" +
-                "参数：text（必填，待翻译文本），from（源语言，默认auto自动检测），to（目标语言，默认zh中文）。" +
-                "返回：翻译结果。";
-    }
 
     @Override
     public String execute(Map<String, Object> params) {
@@ -196,41 +189,5 @@ public class TranslatorTool extends AbstractTool {
         } catch (NoSuchAlgorithmException e) {
             throw new RuntimeException("MD5 算法不可用", e);
         }
-    }
-
-
-    @Override
-    public ToolDefinition.Parameters getParameters() {
-
-        ToolDefinition.Parameters parameters = new ToolDefinition.Parameters();
-        parameters.setType("object");
-
-        // 1. text 参数（必填）
-        ToolDefinition.Property textProp = new ToolDefinition.Property();
-        textProp.setType("string");
-        textProp.setDescription("待翻译的文本");
-
-        // 2. from 参数（可选，源语言）
-        ToolDefinition.Property fromProp = new ToolDefinition.Property();
-        fromProp.setType("string");
-        fromProp.setDescription("源语言代码，如'zh'中文、'en'英文、'auto'自动检测，默认auto");
-
-        // 3. to 参数（可选，目标语言）
-        ToolDefinition.Property toProp = new ToolDefinition.Property();
-        toProp.setType("string");
-        toProp.setDescription("目标语言代码，如'zh'中文、'en'英文、'ja'日文、'ko'韩文，默认zh");
-
-        Map<String, ToolDefinition.Property> properties = new HashMap<>();
-        properties.put("text", textProp);
-        properties.put("from", fromProp);
-        properties.put("to", toProp);
-        parameters.setProperties(properties);
-
-        List<String> required = new ArrayList<>();
-        required.add("text");
-        parameters.setRequired(required);
-
-        return parameters;
-
     }
 }

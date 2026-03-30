@@ -2,6 +2,7 @@ package com.jujiu.agent.tool;
 
 import com.jujiu.agent.model.dto.deepseek.ToolDefinition;
 
+import java.util.HashMap;
 import java.util.Map;
 
 /**
@@ -26,71 +27,21 @@ import java.util.Map;
  */
 public abstract class AbstractTool {
     /**
-     * 获取工具名称
-     *
-     * 【设计目的】
-     * 工具的唯一标识，用于：
-     * - 调用时根据名称找到对应工具
-     * - AI决定使用哪个工具的依据
-     *
-     * 【约束】
-     * 子类必须返回唯一的名称，如 "weather"、"calculator"
+     * 工具名称（用于日志和关联，不再用于配置）
+     * 注意：必须与数据库 tool.tool_name 一致
      */
     public abstract String getName();
-
+    
     /**
-     * 获取工具描述
-     *
-     * 【设计目的】
-     * 描述工具的能力，用于：
-     * - /tools 接口返回给前端展示
-     * - AI根据描述决定何时调用此工具
-     *
-     * 【最佳实践】
-     * 描述应该清晰说明：
-     * - 工具能做什么
-     * - 需要什么参数
-     * - 返回什么结果
-     */
-    public abstract String getDescription();
-
-    /**
-     * 执行工具
-     *
-     * 【设计目的】
-     * 这是工具的核心方法，系统统一调用此方法执行工具
-     *
-     * 【为什么参数用 Map？】
-     * - 不同工具的参数不同（天气需要city，计算器需要expression）
-     * - 用 Map 可以灵活接收任意结构的参数
-     * - 不需要为每个工具定义不同的参数类
-     *
-     * 【为什么返回 String？】
-     * - 统一返回格式，便于处理
-     * - 无论工具内部多复杂，对外接口统一
-     *
-     * 【参数验证】
-     * 子类应该在 execute() 中验证必填参数，返回错误信息而不是抛异常
-     * 例如：缺少参数时返回 "错误：缺少必填参数 xxx"
-     *
-     * @param params 工具参数（如 {"city": "北京"}）
-     * @return 执行结果（成功返回数据，失败返回错误信息）
+     * 执行工具（参数已经从数据库配置验证过）
      */
     public abstract String execute(Map<String, Object> params);
 
     /**
-     * 获取工具参数定义
-     *
-     * 【设计目的】
-     * 定义工具需要哪些参数，用于：
-     * - Function Calling 时告诉 AI 需要传什么参数
-     * - 参数校验和文档生成
-     *
-     * 【返回格式】
-     * 返回符合 JSON Schema 的参数定义对象
-     * 包含：参数类型、属性列表、必填字段
-     *
-     * @return 参数定义对象
+     * 默认参数（作为数据库未配置时的 fallback）
      */
-    public abstract ToolDefinition.Parameters getParameters();
+    public Map<String, Object> getParameters() {
+        // 默认返回空，子类可覆盖
+        return new HashMap<>();
+    }
 }

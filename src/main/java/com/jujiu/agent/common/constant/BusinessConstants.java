@@ -64,8 +64,13 @@ public class BusinessConstants {
     /**
      * 最后消息预览最大长度
      */
-    public static final int MAX_LAST_MESSAGE_PREVIEW = 50;
+    public static final int MAX_LAST_MESSAGE_PREVIEW = 100;
 
+    /**
+     * 函数调用最大迭代次数
+     */
+    public static final int FUNCTION_CALLING_MAX_ITERATIONS = 5;
+    
     // ==================== 分页默认值 ====================
 
     /**

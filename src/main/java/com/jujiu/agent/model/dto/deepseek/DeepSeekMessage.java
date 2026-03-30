@@ -1,5 +1,6 @@
 package com.jujiu.agent.model.dto.deepseek;
 
+import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.constraints.NotBlank;
@@ -22,6 +23,7 @@ import java.util.List;
 @Data
 @AllArgsConstructor
 @NoArgsConstructor
+@JsonInclude(JsonInclude.Include.NON_NULL)   // null字段不序列化到JSON
 @Schema(description = "对话消息", title = "单条对话消息")
 public class DeepSeekMessage {
     

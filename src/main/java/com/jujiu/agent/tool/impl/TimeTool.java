@@ -15,11 +15,7 @@ public class TimeTool extends AbstractTool {
     public String getName() {
         return "time";
     }
-
-    @Override
-    public String getDescription() {
-        return "";
-    }
+    
 
     @Override
     public String execute(Map<String, Object> params) {
@@ -40,9 +36,5 @@ public class TimeTool extends AbstractTool {
     private String getTimeFormat(String time) {
         return null;
     }
-
-    @Override
-    public ToolDefinition.Parameters getParameters() {
-        return null;
-    }
+    
 }

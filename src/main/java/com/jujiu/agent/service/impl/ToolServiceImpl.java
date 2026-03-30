@@ -5,6 +5,7 @@ import com.jujiu.agent.model.dto.deepseek.ToolDefinition;
 import com.jujiu.agent.model.dto.request.ExecuteToolRequest;
 import com.jujiu.agent.model.dto.response.ExecuteToolResponse;
 import com.jujiu.agent.model.dto.response.ToolResponse;
+import com.jujiu.agent.model.entity.Tool;
 import com.jujiu.agent.service.ToolService;
 import com.jujiu.agent.tool.AbstractTool;
 import com.jujiu.agent.tool.ToolRegistry;
@@ -28,28 +29,16 @@ import java.util.concurrent.TimeoutException;
 public class ToolServiceImpl implements ToolService {
     /**
      * 工具注册中心
-     *
-     * 【为什么注入 ToolRegistry？】
-     * 需要从注册中心获取工具列表和具体工具
      */
     private final ToolRegistry toolRegistry;
     
     /**
      * ObjectMapper 用于解析 JSON
-     *
-     * 【为什么需要？】
-     * 工具的 parameters 字段是 JSON 字符串，
-     * 需要解析成 Map<String, Object> 传给工具执行
      */
     private final ObjectMapper objectMapper;
 
     /**
      * 构造函数注入
-     *
-     * 【为什么用构造器注入？】
-     * - 依赖关系一目了然
-     * - 便于单元测试
-     * - 这是推荐的依赖注入方式
      */
     public ToolServiceImpl(ToolRegistry toolRegistry, ObjectMapper objectMapper) {
         this.toolRegistry = toolRegistry;
@@ -60,12 +49,14 @@ public class ToolServiceImpl implements ToolService {
     @Override
     public List<ToolResponse> getToolList() {
         List<ToolResponse> toolResponses = new ArrayList<>();
-        for (AbstractTool tool : toolRegistry.getAllTools()) {
+        for (Tool tool : toolRegistry.getEnabledTools()) {
             ToolResponse toolResponse = ToolResponse.builder()
-                    .toolName(tool.getName())
-                    .displayName(getDisplayName(tool.getName()))
+                    .toolName(tool.getToolName())
+                    // 直接用数据库的显示名称
+                    .displayName(tool.getDisplayName())
                     .description(tool.getDescription())
-                    .parameters(convertToolParameters(tool.getParameters()))
+                    // 传入 JSON 字符串
+                    .parameters(convertToolParameters(tool.getParameters())) 
                     .build();
             toolResponses.add(toolResponse);
         }
@@ -83,7 +74,7 @@ public class ToolServiceImpl implements ToolService {
         log.info("[工具执行] 开始执行工具：name={}, params={}", toolName, parameters);
         
         // 1. 从注册中心获取工具
-        AbstractTool tool = toolRegistry.getTool(toolName);
+        AbstractTool tool = toolRegistry.getImplementation(toolName);
         if (tool == null) {
             log.warn("[工具执行] 工具不存在：name={}", toolName);
             return ExecuteToolResponse.builder()
@@ -125,14 +116,6 @@ public class ToolServiceImpl implements ToolService {
     
     /**
      * 获取工具显示名称
-     *
-     * 【设计目的】
-     * 将工具名称转换为友好的显示名称
-     * 如 "weather" → "天气查询"
-     *
-     * 【为什么不直接用 name？】
-     * name 是给系统用的（唯一标识），
-     * displayName 是给用户看的（友好名称）
      */
     private String getDisplayName(String name) {
         return switch (name) {
@@ -151,26 +134,41 @@ public class ToolServiceImpl implements ToolService {
      * 从工具描述中提取参数定义
      *
      */
-    private List<ToolResponse.ParameterDefinition> convertToolParameters(
-            ToolDefinition.Parameters toolParams) {
-        if (toolParams == null || toolParams.getProperties() == null) {
+    private List<ToolResponse.ParameterDefinition> convertToolParameters(String parametersJson) {
+        if (parametersJson == null || parametersJson.isEmpty()) {
             return new ArrayList<>();
         }
 
-        List<ToolResponse.ParameterDefinition> params = new ArrayList<>();
-        List<String> required = toolParams.getRequired() != null ?toolParams.getRequired() : new ArrayList<>();
+        try {
+            // 解析 JSON 字符串
+            @SuppressWarnings("unchecked")
+            Map<String, Object> paramsMap = objectMapper.readValue(parametersJson, Map.class);
 
-        for (Map.Entry<String, ToolDefinition.Property> entry :
-                toolParams.getProperties().entrySet()) {
-            params.add(ToolResponse.ParameterDefinition.builder()
-                    .name(entry.getKey())
-                    .type(entry.getValue().getType())
-                    .required(required.contains(entry.getKey()))
-                    .description(entry.getValue().getDescription())
-                    .build());
+            @SuppressWarnings("unchecked")
+            Map<String, Object> properties = (Map<String, Object>) paramsMap.get("properties");
+            @SuppressWarnings("unchecked")
+            List<String> required = (List<String>) paramsMap.getOrDefault("required", new ArrayList<>());
+
+            if (properties == null) {
+                return new ArrayList<>();
+            }
+
+            List<ToolResponse.ParameterDefinition> params = new ArrayList<>();
+            for (Map.Entry<String, Object> entry : properties.entrySet()) {
+                @SuppressWarnings("unchecked")
+                Map<String, Object> prop = (Map<String, Object>) entry.getValue();
+                params.add(ToolResponse.ParameterDefinition.builder()
+                        .name(entry.getKey())
+                        .type((String) prop.get("type"))
+                        .required(required.contains(entry.getKey()))
+                        .description((String) prop.get("description"))
+                        .build());
+            }
+            return params;
+        } catch (Exception e) {
+            log.error("[工具列表] 解析参数失败: json={}", parametersJson, e);
+            return new ArrayList<>();
         }
-
-        return params;
     }
 
 }

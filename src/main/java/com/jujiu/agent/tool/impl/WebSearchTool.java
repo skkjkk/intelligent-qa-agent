@@ -32,23 +32,14 @@ public class WebSearchTool extends AbstractTool {
     @Value("${serpapi.api.key:}")
     private  String apiKey;
 
-    public WebSearchTool(ToolRegistry toolRegistry, RestTemplate restTemplate) {
+    public WebSearchTool(RestTemplate restTemplate) {
         this.restTemplate = restTemplate;
-        // 向工具注册表中注册当前工具
-        toolRegistry.register(this);
     }
     @Override
     public String getName() {
         return "web_search";
     }
-
-    @Override
-    public String getDescription() {
-        return "网页搜索工具，使用 SerpAPI 搜索互联网信息。" +
-                "参数：query（必填，搜索关键词，如'Java并发编程'）。" +
-                "返回：搜索结果摘要和链接。";
-    }
-
+    
     /**
      * 执行工具
      * 【参数验证】
@@ -150,30 +141,5 @@ public class WebSearchTool extends AbstractTool {
                     i + 1, title, snippet, link));
         }
         return sb;
-    }
-
-    @Override
-    public ToolDefinition.Parameters getParameters() {
-        // 1. 创建参数定义对象
-        ToolDefinition.Parameters parameters = new ToolDefinition.Parameters();
-        parameters.setType("object");
-        
-        // 2. 定义query参数
-        ToolDefinition.Property property = new ToolDefinition.Property();
-        property.setType("string");
-        property.setDescription("搜索关键词，如'Java并发编程'");
-        
-        // 3. 将参数添加到parameters
-        Map<String, ToolDefinition.Property> properties = new HashMap<>();
-        properties.put("query", property);
-        parameters.setProperties(properties);
-        
-        // 4. 设置require
-        List<String> require = new ArrayList<>();
-        require.add("query");
-        parameters.setRequired(require);
-        
-        // 5. 返回参数定义对象
-        return parameters;
     }
 }

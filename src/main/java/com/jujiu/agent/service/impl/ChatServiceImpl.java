@@ -3,6 +3,8 @@ package com.jujiu.agent.service.impl;
 import cn.hutool.core.util.IdUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.jujiu.agent.client.DeepSeekClient;
 import com.jujiu.agent.client.DeepSeekResult;
 import com.jujiu.agent.common.constant.BusinessConstants;
@@ -13,6 +15,7 @@ import com.jujiu.agent.config.DeepSeekProperties;
 import com.jujiu.agent.model.dto.deepseek.DeepSeekMessage;
 import com.jujiu.agent.model.dto.deepseek.DeepSeekRequest;
 import com.jujiu.agent.model.dto.deepseek.DeepSeekResponse;
+import com.jujiu.agent.model.dto.deepseek.ToolCallDTO;
 import com.jujiu.agent.model.dto.request.CreateSessionRequest;
 import com.jujiu.agent.model.dto.request.SendMessageRequest;
 import com.jujiu.agent.model.dto.response.ChatResponse;
@@ -36,6 +39,7 @@ import java.io.IOException;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -65,6 +69,12 @@ public class ChatServiceImpl implements ChatService {
     @Autowired
     private FunctionCallingService functionCallingService;
 
+    @Autowired
+    private ExecutorService chatExecutor;
+    
+    @Autowired
+    private ObjectMapper objectMapper;
+    
     /**
      * 生成会话ID：session_ + 雪花ID
      */
@@ -140,6 +150,7 @@ public class ChatServiceImpl implements ChatService {
                         .role(msg.getRole())
                         .content(msg.getContent())
                         .timestamp(msg.getCreatedAt())
+                        .toolCalls(msg.getToolCalls())
                         .build())
                 .toList();
 
@@ -390,10 +401,10 @@ public class ChatServiceImpl implements ChatService {
     public SseEmitter sendMessageStream(Long userId, SendMessageRequest request) {
         log.info("[CHAT][SEND_MESSAGE_STREAM] 收到消息流请求 - userId={}, sessionId={}", userId, request.getSessionId());
         
-        // 创建 SseEmitter，设置 3 分钟超时时间
+        // 1. 创建 SseEmitter，设置 3 分钟超时时间
         SseEmitter emitter = new SseEmitter(BusinessConstants.SSE_TIMEOUT);
         
-        // 校验会话是否存在且属于当前用户
+        // 2. 校验会话是否存在且属于当前用户
         Session session = sessionRepository.selectOne(
                 new LambdaQueryWrapper<Session>()
                         .eq(Session::getSessionId, request.getSessionId())
@@ -403,10 +414,10 @@ public class ChatServiceImpl implements ChatService {
             throw new BusinessException(ResultCode.SESSION_NOT_FOUND);
         }
         
-        // 执行限流检查，防止 API 调用频率过高
+        // 3. 执行限流检查，防止 API 调用频率过高
         checkRateLimit(userId);
         
-        // 保存用户发送的消息到数据库
+        // 4. 保存用户发送的消息到数据库
         Message message = Message.builder()
                 .messageId(generateMessageId())
                 .sessionId(request.getSessionId())
@@ -419,26 +430,65 @@ public class ChatServiceImpl implements ChatService {
         log.info("[CHAT][SEND_MESSAGE_STREAM] 用户消息保存成功 - messageId={}, sessionId={}",
                 message.getMessageId(), request.getSessionId());
         
-        // 如果是会话的第一条消息，自动生成会话标题
+        // 5. 如果是会话的第一条消息，自动生成会话标题
         if (session.getMessageCount() == 0) {
             session.setTitle(generateTitle(request.getMessage()));
+            
+            // 5.1 更新会话标题
+            sessionRepository.updateById(session);
+            
             log.info("[CHAT][SEND_MESSAGE_STREAM] 会话第一次消息，自动生成标题 - sessionId={}, title={}",
                     request.getSessionId(), session.getTitle());
         }
         
-        // 查询历史消息，构建多轮对话上下文
-        List<Message> historyMessages = messageRepository.selectList(
+        // 6. 查询历史消息，构建多轮对话上下文
+        // 先查询所有消息按时间正序
+        List<Message> allMessages = messageRepository.selectList(
                 new LambdaQueryWrapper<Message>()
                         .eq(Message::getSessionId, request.getSessionId())
                         .orderByAsc(Message::getCreatedAt)
-                        .last("limit " + deepSeekProperties.getMaxContextMessages())
         );
+
+        // 如果消息数超过限制，只取最新的 N 条
+        List<Message> historyMessages;
+        int maxMessages = deepSeekProperties.getMaxContextMessages();
+        if (allMessages.size() > maxMessages) {
+            historyMessages = allMessages.subList(allMessages.size() - maxMessages, allMessages.size());
+        } else {
+            historyMessages = allMessages;
+        }
         
-        // 将历史消息转换为 DeepSeek API 所需的消息格式
+        // 7. 将历史消息转换为 DeepSeek API 所需的消息格式
         List<DeepSeekMessage> deepSeekMessages = new ArrayList<>(historyMessages.stream()
                 .map(msg -> {
                     DeepSeekMessage deepSeekMessage = new DeepSeekMessage();
-                    deepSeekMessage.setRole(DeepSeekMessage.MessageRole.fromValue(msg.getRole()));                    deepSeekMessage.setContent(msg.getContent());
+                    deepSeekMessage.setRole(DeepSeekMessage.MessageRole.fromValue(msg.getRole()));
+                    String content = msg.getContent();
+
+                    // tool 消息的 content 不能为 null 或空字符串，必须有内容
+                    if ("tool".equals(msg.getRole())) {
+                        deepSeekMessage.setContent(content != null && !content.isEmpty() ? content : "工具执行结果为空");
+                    } else {
+                        // assistant/user 消息：空字符串转为 null
+                        deepSeekMessage.setContent((content == null || content.isEmpty()) ? null : content);
+                    }
+
+                    // 恢复tool_calls
+                    if (msg.getToolCalls() != null && !msg.getToolCalls().isEmpty()) {
+                        try {
+                            List<ToolCallDTO> toolCalls = objectMapper.readValue(
+                                    msg.getToolCalls(),
+                                    new TypeReference<List<ToolCallDTO>>() {}
+                            );
+                            deepSeekMessage.setToolCalls(toolCalls);
+                        } catch (Exception e) {
+                            log.warn("[CHAT] 解析历史消息tool_calls失败 - messageId={}", msg.getMessageId(), e);
+                        }
+                    }
+                    // 恢复tool_call_id
+                    if (msg.getToolCallId() != null && !msg.getToolCallId().isEmpty()) {
+                        deepSeekMessage.setToolCallId(msg.getToolCallId());
+                    }
                     return deepSeekMessage;
                 }).toList());
         
@@ -447,115 +497,95 @@ public class ChatServiceImpl implements ChatService {
         systemMessage.setRole(DeepSeekMessage.MessageRole.SYSTEM);
         systemMessage.setContent(deepSeekProperties.getSystemPrompt());
         deepSeekMessages.add(0, systemMessage);
-       
-        
-        // 调用 DeepSeek 流式接口，获取 Flux 响应流（带 Token 统计）
-        Flux<DeepSeekClient.StreamResult> stream = deepSeekClient.chatStreamWithUsage(deepSeekMessages);
 
-       // 使用 StringBuilder 拼接完整的 AI 回复内容
-        StringBuilder fullReply = new StringBuilder();
-        // 缓冲区，用于积累数据块
-        StringBuilder buffer = new StringBuilder();
-        // 标点符号，遇到时立即推送
-        final String PUNCTUATION = "。！？.!?\n";
-        // Token 用量统计（最后一条消息会填充）
-        final DeepSeekClient.StreamResponse.StreamUsage[] usageHolder = new DeepSeekClient.StreamResponse.StreamUsage[1];
-
-        // 订阅响应流，处理实时推送的数据块
-        stream.subscribe(
-                // 每收到一块内容时的回调处理
-                result -> {
-                    if (result.isEnd()) {
-                        // 保存 token 用量信息
-                        usageHolder[0] = result.getUsage();
-                        // 安全获取 Token 用量，防止 NPE
-                        Integer promptTokens = result.getUsage() != null && result.getUsage().getPromptTokens() != null
-                                ? result.getUsage().getPromptTokens() : 0;
-                        Integer completionTokens = result.getUsage() != null && result.getUsage().getCompletionTokens() != null
-                                ? result.getUsage().getCompletionTokens() : 0;
-                        Integer totalTokens = result.getUsage() != null && result.getUsage().getTotalTokens() != null
-                                ? result.getUsage().getTotalTokens() : 0;
-                        log.info("[CHAT][STREAM_END] 收到流式结束标记，Token用量 - promptTokens={}, completionTokens={}, totalTokens={}",
-                                promptTokens, completionTokens, totalTokens);
-                        return;
-                    }
-
-                    String content = result.getContent();
-                    // 拼接到完整回复和缓冲区
-                    fullReply.append(content);
-                    buffer.append(content);
-
-                    // 检查是否需要推送：缓冲区满 或 包含标点符号
-                    boolean hasPunctuation = content.chars().anyMatch(c -> PUNCTUATION.indexOf(c) >= 0);
-                    if (buffer.length() >= BusinessConstants.SSE_BUFFER_SIZE || hasPunctuation) {
-                        String batchContent = buffer.toString();
-                        log.debug("[CHAT][STREAM_BATCH] 批量推送 - sessionId={}, length={}, content={}",
-                                request.getSessionId(), batchContent.length(), batchContent);
-                        try {
-                            // 推送给客户端
-                            emitter.send(batchContent);
-                            // 清空缓冲区
-                            buffer.setLength(0);
-                        } catch (IOException e) {
-                            log.error("[CHAT][SEND_MESSAGE_STREAM] 推送内容给客户端出错 - sessionId={}", request.getSessionId(), e);
+        // 提交到线程池
+        chatExecutor.submit(() -> {
+            try {
+                FunctionCallingService.StreamingChatResult result = functionCallingService.streamChatWithTools(
+                        deepSeekMessages,
+                        event -> {
+                            // 转发事件给前端
+                            try {
+                                emitter.send(SseEmitter.event()
+                                        .name(event.getType())
+                                        .data(event));
+                            } catch (IOException e) {
+                                log.error("[CHAT][SEND_MESSAGE_STREAM] 推送内容给客户端出错 - sessionId={}", request.getSessionId(), e);
+                                throw new RuntimeException(e);
+                            }
                         }
-                    }
-                },
-                // 发生错误时的回调处理
-                error -> {
-                    log.error("[CHAT][SEND_MESSAGE_STREAM] 流式接口发生错误 - sessionId={}", request.getSessionId(), error);
-                    emitter.completeWithError(error);
-                },
-                // 流结束时的回调处理
-                () -> {
-                    try {
-                        // 推送缓冲区剩余内容
-                        if (buffer.length() > 0) {
-                            emitter.send(buffer.toString());
-                            log.debug("[CHAT][STREAM_BATCH] 推送剩余内容 - sessionId={}, length={}",
-                                    request.getSessionId(), buffer.length());
-                        }
+                );
 
-                        log.info("[CHAT][SEND_MESSAGE_STREAM] 流式接口结束 - sessionId={}, totalLength={}",
-                                request.getSessionId(), fullReply.length());
-
-                        // 回填用户消息的 token（promptTokens）
-                        if (usageHolder[0] != null && usageHolder[0].getPromptTokens() != null) {
-                            message.setTokens(usageHolder[0].getPromptTokens());
-                            messageRepository.updateById(message);
-                            log.info("[CHAT][TOKEN_UPDATE] 用户消息 Token 更新成功 - messageId={}, promptTokens={}",
-                                    message.getMessageId(), usageHolder[0].getPromptTokens());
-                        }
-
-                        // 保存 AI 消息到数据库（包含 completionTokens）
-                        Integer completionTokens = usageHolder[0] != null && usageHolder[0].getCompletionTokens() != null
-                                ? usageHolder[0].getCompletionTokens() : 0;
-                        Message aiMessage = Message.builder()
+                // 8. 保存所有中间消息（包括带tool_calls的assistant消息和tool消息）
+                for (DeepSeekMessage msg : result.getMessagesToSave()) {
+                    // 判断是assistant消息（有tool_calls）还是tool消息（有toolCallId）
+                    if (msg.getToolCalls() != null && !msg.getToolCalls().isEmpty()) {
+                        // 这是带 tool_calls 的 assistant 消息，需要保存
+                        Message toolCallMessage = Message.builder()
                                 .messageId(generateMessageId())
                                 .sessionId(request.getSessionId())
-                                .role("assistant")
-                                .content(fullReply.toString())
+                                .role(msg.getRole().getValue())
+                                .content(msg.getContent())   // ← 直接传，null就是null，DeepSeek允许tool_calls消息content为null
+                                .toolCalls(objectMapper.writeValueAsString(msg.getToolCalls()))
                                 .createdAt(LocalDateTime.now())
-                                .tokens(completionTokens)
+                                .tokens(0)  // 中间消息不统计token
                                 .build();
-                        messageRepository.insert(aiMessage);
-
-                        // 更新会话最后一条消息预览和消息数量
-                        log.info("[CHAT][SEND_MESSAGE_STREAM] 更新会话最后一条消息和消息数 - sessionId={}", request.getSessionId());
-                        session.setLastMessage(aiMessage.getContent().substring(0, Math.min(aiMessage.getContent().length(), BusinessConstants.MAX_LAST_MESSAGE_PREVIEW)) + "...");
-                        session.setMessageCount(session.getMessageCount() + 2);
-                        session.setUpdatedAt(LocalDateTime.now());
-                        sessionRepository.updateById(session);
-                        log.info("[CHAT][SEND_MESSAGE_STREAM] AI 消息保存成功 - messageId={}, sessionId={}, completionTokens={}",
-                                aiMessage.getMessageId(), request.getSessionId(), completionTokens);
-
-                        // 完成 SSE 连接，通知客户端响应结束
-                        emitter.complete();
-                    } catch (Exception e) {
-                        log.error("[CHAT][SEND_MESSAGE_STREAM] 完成连接时出错 - sessionId={}", request.getSessionId(), e);
+                        messageRepository.insert(toolCallMessage);
+                    } else if (msg.getToolCallId() != null) {
+                        // 保存tool消息（工具返回结果）
+                        Message toolMessage = Message.builder()
+                                .messageId(generateMessageId())
+                                .sessionId(request.getSessionId())
+                                .role(msg.getRole().getValue())
+                                .content(msg.getContent())
+                                .toolCallId(msg.getToolCallId())  // 保存tool_call_id
+                                .createdAt(LocalDateTime.now())
+                                .tokens(0)
+                                .build();
+                        messageRepository.insert(toolMessage);
                     }
                 }
-        );
+                
+                // 8. 流结束，保存AI信息
+                log.info("[CHAT][SEND_MESSAGE_STREAM] 流结束，保存ai信息 - sessionId={}", request.getSessionId());
+
+                // 8.1 构建 AI 消息
+                Message aiMessage = Message.builder()
+                        .messageId(generateMessageId())
+                        .sessionId(request.getSessionId())
+                        .role(BusinessConstants.ROLE_ASSISTANT)
+                        .content(result.getFinalReply())
+                        .createdAt(LocalDateTime.now())
+                        .tokens(result.getCompletionTokens())
+                        .build();
+
+                messageRepository.insert(aiMessage);
+                log.info("[CHAT][SEND_MESSAGE_STREAM] AI消息保存成功 - messageId={}, sessionId={}, role={}, content={}, createdAt={}, tokens={}",
+                        aiMessage.getMessageId(), request.getSessionId(), aiMessage.getRole(), aiMessage.getContent(), aiMessage.getCreatedAt(), aiMessage.getTokens());
+                
+                // 9. 回填用户消息的promptTokens
+                message.setTokens(result.getPromptTokens());
+                messageRepository.updateById(message);
+
+                // 10. 更新会话
+                session.setLastMessage(result.getFinalReply().substring(0, Math.min(result.getFinalReply().length(), BusinessConstants.MAX_LAST_MESSAGE_PREVIEW)) + "...");
+                session.setMessageCount(session.getMessageCount() + 2);
+                session.setUpdatedAt(LocalDateTime.now());
+                sessionRepository.updateById(session);
+
+                // 11. 发送done事件
+                emitter.send(SseEmitter.event()
+                        .name("done")
+                        .data(result));
+
+                // 12. 完成
+                emitter.complete();
+                log.info("[CHAT][SEND_MESSAGE_STREAM] 消息流处理完成 - sessionId={}", request.getSessionId());
+            } catch (Exception e) {
+                log.error("[CHAT][SEND_MESSAGE_STREAM] 处理消息流时出错 - sessionId={}", request.getSessionId(), e);
+                emitter.completeWithError(e);
+            }
+        });
         return emitter;
     }
 }
