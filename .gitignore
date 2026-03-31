@@ -16,6 +16,8 @@ dependency-reduced-pom.xml
 .settings/
 .classpath
 .project
+.kiro/
+.minimax/
 
 # Logs
 logs/
@@ -27,4 +29,9 @@ Thumbs.db
 
 # Application
 application-local.yml
-application-dev.yml
+application-prod.yml
+
+# Local docs and tooling state
+docs/
+
+scripts/
