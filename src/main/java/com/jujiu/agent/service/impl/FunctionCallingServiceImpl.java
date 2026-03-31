@@ -1,8 +1,6 @@
 package com.jujiu.agent.service.impl;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.JsonMappingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.jujiu.agent.client.DeepSeekClient;
 import com.jujiu.agent.client.DeepSeekResult;
@@ -14,8 +12,7 @@ import com.jujiu.agent.model.dto.deepseek.ToolCallDTO;
 import com.jujiu.agent.model.dto.deepseek.ToolDefinition;
 import com.jujiu.agent.model.entity.Tool;
 import com.jujiu.agent.service.FunctionCallingService;
-import com.jujiu.agent.service.FunctionCallingService.StreamEvent;
-import com.jujiu.agent.service.FunctionCallingService.StreamingChatResult;
+
 import com.jujiu.agent.tool.AbstractTool;
 import com.jujiu.agent.tool.ToolRegistry;
 import lombok.extern.slf4j.Slf4j;
@@ -209,27 +206,6 @@ public class FunctionCallingServiceImpl implements FunctionCallingService {
             log.info("[TOOL_EXECUTION] toolName={}, success={}, durationMs={}, errorMessage={}",
                     toolName, success, durationMs, errorMessage);
         }
-    }
-
-    /**
-     * 追加工具执行结果到消息列表
-     *
-     * @param messages  对话消息列表
-     * @param toolCalls 工具调用列表
-     * @return 追加结果后的消息列表
-     */
-    private List<DeepSeekMessage> appendToolResults(
-            List<DeepSeekMessage> messages,
-            List<ToolCallDTO> toolCalls
-    ) {
-        if (toolCalls == null || toolCalls.isEmpty()) {
-            return messages;
-        }
-        for (ToolCallDTO toolCall : toolCalls) {
-            String result = executeTool(toolCall);
-            messages.add(DeepSeekMessage.toolMessage(toolCall.getId(), result));
-        }
-        return messages;
     }
 
     @Override
@@ -459,10 +435,6 @@ public class FunctionCallingServiceImpl implements FunctionCallingService {
                 result.add(dto);
             }
             return result;
-        }
-
-        public String getFinishReason() {
-            return finishReason;
         }
 
         public DeepSeekClient.StreamResponse.StreamUsage getUsage() {

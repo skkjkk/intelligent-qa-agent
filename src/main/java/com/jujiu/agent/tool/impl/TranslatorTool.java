@@ -1,8 +1,6 @@
 package com.jujiu.agent.tool.impl;
 
-import com.jujiu.agent.model.dto.deepseek.ToolDefinition;
 import com.jujiu.agent.tool.AbstractTool;
-import com.jujiu.agent.tool.ToolRegistry;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpEntity;
@@ -13,14 +11,9 @@ import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestTemplate;
 import org.springframework.web.util.InvalidUrlException;
-import org.springframework.web.util.UriComponentsBuilder;
-
-import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
-import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 

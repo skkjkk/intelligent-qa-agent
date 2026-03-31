@@ -8,13 +8,10 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.jujiu.agent.client.DeepSeekClient;
 import com.jujiu.agent.client.DeepSeekResult;
 import com.jujiu.agent.common.constant.BusinessConstants;
-import com.jujiu.agent.common.constant.RedisKeys;
 import com.jujiu.agent.common.exception.BusinessException;
 import com.jujiu.agent.common.result.ResultCode;
 import com.jujiu.agent.config.DeepSeekProperties;
 import com.jujiu.agent.model.dto.deepseek.DeepSeekMessage;
-import com.jujiu.agent.model.dto.deepseek.DeepSeekRequest;
-import com.jujiu.agent.model.dto.deepseek.DeepSeekResponse;
 import com.jujiu.agent.model.dto.deepseek.ToolCallDTO;
 import com.jujiu.agent.model.dto.request.CreateSessionRequest;
 import com.jujiu.agent.model.dto.request.SendMessageRequest;
@@ -31,18 +28,15 @@ import com.jujiu.agent.service.ChatService;
 import com.jujiu.agent.service.FunctionCallingService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
-import reactor.core.publisher.Flux;
 
 import java.io.IOException;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.TimeUnit;
 
 /**
  * @author 17644

@@ -1,6 +1,5 @@
 package com.jujiu.agent.tool;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.jujiu.agent.model.entity.Tool;
 import com.jujiu.agent.repository.ToolRepository;
 import jakarta.annotation.PostConstruct;
@@ -10,7 +9,6 @@ import org.springframework.context.ApplicationContext;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -46,9 +44,6 @@ public class ToolRegistry {
 
     @Autowired
     private ToolRepository toolRepository;
-
-    @Autowired
-    private ObjectMapper objectMapper;
     
     // 缓存：工具名称 -> 实现实例
     private final Map<String, AbstractTool> toolImplementations  = new ConcurrentHashMap<>();

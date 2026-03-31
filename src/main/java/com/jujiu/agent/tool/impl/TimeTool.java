@@ -1,6 +1,5 @@
 package com.jujiu.agent.tool.impl;
 
-import com.jujiu.agent.model.dto.deepseek.ToolDefinition;
 import com.jujiu.agent.tool.AbstractTool;
 
 import java.util.Map;

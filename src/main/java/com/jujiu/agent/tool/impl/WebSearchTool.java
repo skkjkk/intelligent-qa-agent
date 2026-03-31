@@ -1,9 +1,6 @@
 package com.jujiu.agent.tool.impl;
 
-import com.jujiu.agent.model.dto.deepseek.ToolDefinition;
 import com.jujiu.agent.tool.AbstractTool;
-import com.jujiu.agent.tool.ToolRegistry;
-
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
@@ -12,8 +9,6 @@ import org.springframework.web.util.UriComponentsBuilder;
 
 import java.io.UnsupportedEncodingException;
 import java.net.URI;
-import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 

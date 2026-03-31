@@ -1,7 +1,6 @@
 package com.jujiu.agent.service.impl;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.jujiu.agent.model.dto.deepseek.ToolDefinition;
 import com.jujiu.agent.model.dto.request.ExecuteToolRequest;
 import com.jujiu.agent.model.dto.response.ExecuteToolResponse;
 import com.jujiu.agent.model.dto.response.ToolExecutionResult;

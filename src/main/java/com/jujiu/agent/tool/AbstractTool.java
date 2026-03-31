@@ -1,6 +1,5 @@
 package com.jujiu.agent.tool;
 
-import com.jujiu.agent.model.dto.deepseek.ToolDefinition;
 import com.jujiu.agent.model.dto.response.ToolExecutionResult;
 
 import java.util.HashMap;

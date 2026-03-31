@@ -1,7 +1,5 @@
 package com.jujiu.agent.test;
 
-import com.jujiu.agent.repository.UserRepository;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.security.crypto.bcrypt.BCrypt;
 
 /**
@@ -9,7 +7,6 @@ import org.springframework.security.crypto.bcrypt.BCrypt;
  */
 public class BCryptTest {
     
-    private UserRepository userRepository;
     public static void main(String[] args) {
         // 生成用于数据库的测试密码
         String testPassword = "123456";
