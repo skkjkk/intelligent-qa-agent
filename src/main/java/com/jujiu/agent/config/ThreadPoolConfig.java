@@ -33,9 +33,8 @@ public class ThreadPoolConfig {
                     public Thread newThread(Runnable r) {
                         Thread thread = new Thread(r);
                         // 线程名：chat-stream-1
-                        int count = atomicInteger.getAndIncrement();
-                        thread.setName("chat-stream-" + (++count));
-                        thread.setDaemon(true);  // 守护线程，不阻止 JVM 退出
+                        thread.setName("chat-stream-" + atomicInteger.incrementAndGet());
+                        thread.setDaemon(true); // 守护线程，不阻止 JVM 退出
                         return thread;
                     }
                     

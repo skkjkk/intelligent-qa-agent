@@ -101,8 +101,8 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                 // 7. 将认证信息设置到 SecurityContext 中
                 SecurityContextHolder.getContext().setAuthentication(authentication);
 
-                log.info("[SECURITY][AUTH_SUCCESS] JWT 认证成功 - userId={}, username={}, role={}, uri={}, costTime={}ms",
-                        userId, username, role, request.getRequestURI(), System.currentTimeMillis() - startTime);
+                log.info("[SECURITY][AUTH_SUCCESS] JWT 认证成功 - userId={}, role={}, uri={}, costTime={} ms",
+                        userId, role, request.getRequestURI(), System.currentTimeMillis() - startTime);
             } else {
                 log.warn("[SECURITY][AUTH_FAILED] Token 无效或已过期 - uri={}", request.getRequestURI());
             }
@@ -111,7 +111,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                     request.getRequestURI(), e.getMessage(), System.currentTimeMillis() - startTime, e);
             response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
             response.setContentType("application/json;charset=UTF-8");
-            response.getWriter().write("{\"error\":\"Unauthorized\",\"message\":\"" + e.getMessage() + "\"}");
+            response.getWriter().write("{\"code\":401,\"message\":\"未授权访问\"}");
             return;
         } finally {
             log.info("[SECURITY][FILTER] 请求处理完成 - uri={}, totalCostTime={}ms",

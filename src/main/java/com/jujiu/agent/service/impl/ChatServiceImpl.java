@@ -384,8 +384,9 @@ public class ChatServiceImpl implements ChatService {
         // 4. 如果是会话的第一条消息，自动生成会话标题
         if (session.getMessageCount() == 0) {
             String title = generateTitle(request.getMessage());
-            session.setTitle(title);
-            sessionRepository.updateById(session);
+            chatPersistenceService.updateSessionTitle(session, title);
+            log.info("[CHAT][AUTO_TITLE] 为会话自动生成标题 - sessionId={}",
+                    request.getSessionId());
         }
 
         // 5. 查询历史消息，构建多轮对话上下文

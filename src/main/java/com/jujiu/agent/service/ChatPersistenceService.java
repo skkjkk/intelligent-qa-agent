@@ -20,4 +20,6 @@ public interface ChatPersistenceService {
     void updateSessionAfterReply(Session session, String finalReply, int messageIncrement);
 
     void deleteSessionMessages(String sessionId);
+
+    void updateSessionTitle(Session session, String title);
 }

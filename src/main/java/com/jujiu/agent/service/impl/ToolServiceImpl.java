@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.jujiu.agent.model.dto.deepseek.ToolDefinition;
 import com.jujiu.agent.model.dto.request.ExecuteToolRequest;
 import com.jujiu.agent.model.dto.response.ExecuteToolResponse;
+import com.jujiu.agent.model.dto.response.ToolExecutionResult;
 import com.jujiu.agent.model.dto.response.ToolResponse;
 import com.jujiu.agent.model.entity.Tool;
 import com.jujiu.agent.service.ToolService;
@@ -86,7 +87,20 @@ public class ToolServiceImpl implements ToolService {
         
         try {
             // 2. 执行工具
-            String result = tool.execute(parameters);
+            ToolExecutionResult result = CompletableFuture
+                    .supplyAsync(() -> tool.executeStructured(parameters))
+                    .orTimeout(10, TimeUnit.SECONDS)
+                    .exceptionally(e -> {
+                        Throwable cause = e.getCause() != null ? e.getCause() : e;
+                        return ToolExecutionResult.builder()
+                                .success(false)
+                                .message("工具执行失败")
+                                .errorCode(cause instanceof TimeoutException ? "TOOL_EXECUTE_TIMEOUT" : "TOOL_EXECUTE_ERROR")
+                                .data(null)
+                                .durationMs(System.currentTimeMillis() - startTime)
+                                .build();
+                    })
+                    .join();
             long executionTime = System.currentTimeMillis() - startTime;
 
             log.info("[工具执行] 执行成功：name={}, time={}ms", toolName, executionTime);
@@ -94,9 +108,10 @@ public class ToolServiceImpl implements ToolService {
             // 3. 返回结果
             return ExecuteToolResponse.builder()
                     .toolName(toolName)
-                    .result(result)
-                    .executionTime(executionTime)
-                    .success(true)
+                    .result(result.getData() == null ? null : result.getData().toString())
+                    .executionTime(result.getDurationMs())
+                    .success(result.isSuccess())
+                    .errorMessage(result.isSuccess() ? null : result.getMessage())
                     .build();
         } catch (Exception e) {
             long executionTime = System.currentTimeMillis() - startTime;

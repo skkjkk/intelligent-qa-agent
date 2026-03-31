@@ -77,14 +77,13 @@ public class ToolRegistry {
         for (Tool dbTool : dbTools) {
             String className = dbTool.getClassName();
             AbstractTool implementation  = toolImplementations.get(className);
-            
+
             if (implementation == null) {
-                // 数据库配了，但代码没实现 -> 严重错误，启动失败
-                log.error("[TOOL_REGISTRY] 数据库配置了未实现的工具: className={}, toolName={}",
+                log.error("[TOOL_REGISTRY] 数据库配置了未实现的工具，已跳过加载 - className={}, toolName={}",
                         className, dbTool.getToolName());
-                throw new IllegalStateException("工具配置错误: " + dbTool.getToolName() +
-                        " 的实现类 " + className + " 不存在");
+                continue;
             }
+
 
             // 校验名称一致性
             if (!implementation.getName().equals(dbTool.getToolName())) {

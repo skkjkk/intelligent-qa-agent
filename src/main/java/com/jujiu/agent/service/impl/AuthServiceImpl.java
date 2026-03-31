@@ -84,7 +84,7 @@ public class AuthServiceImpl implements AuthService {
         if (rawPassword == null) {
             throw new BusinessException(ResultCode.LOGIN_FAILED);
         }
-        if (!passwordEncoder.matches(rawPassword.trim(), user.getPassword())) {
+        if (!passwordEncoder.matches(rawPassword, user.getPassword())) {
             log.warn("[AUTH][LOGIN] 密码错误 - ip={}", getClientIp());
             // 密码错误，记录失败
             recordFailAttempt(failKey);
@@ -201,7 +201,7 @@ public class AuthServiceImpl implements AuthService {
                 // 未知用户用 -1 标记
                 .userId(userId)
                 .ip(getClientIp())
-                .userAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+                .userAgent(getUserAgent())
                 // 登录状态：0-失败，1-成功
                 .status(status)
                 .loginTime(LocalDateTime.now())
@@ -209,6 +209,17 @@ public class AuthServiceImpl implements AuthService {
         loginLogRepository.insert(log);
     }
     
+    private String getUserAgent() {
+        ServletRequestAttributes attributes =
+                (ServletRequestAttributes) RequestContextHolder.getRequestAttributes();
+        if (attributes == null) {
+            return "unknown";
+        }
+
+        HttpServletRequest request = attributes.getRequest();
+        String userAgent = request.getHeader("User-Agent");
+        return userAgent != null ? userAgent : "unknown";
+    }
     /**
      * 获取客户端 IP 地址
      * 

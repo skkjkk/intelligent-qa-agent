@@ -127,4 +127,11 @@ public class ChatPersistenceServiceImpl implements ChatPersistenceService {
     public void deleteSessionMessages(String sessionId) {
         messageRepository.deleteByMap(java.util.Map.of("session_id", sessionId));
     }
+
+    @Override
+    public void updateSessionTitle(Session session, String title) {
+        session.setTitle(title);
+        session.setUpdatedAt(LocalDateTime.now());
+        sessionRepository.updateById(session);
+    }
 }

@@ -1,6 +1,7 @@
 package com.jujiu.agent.tool;
 
 import com.jujiu.agent.model.dto.deepseek.ToolDefinition;
+import com.jujiu.agent.model.dto.response.ToolExecutionResult;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -43,5 +44,26 @@ public abstract class AbstractTool {
     public Map<String, Object> getParameters() {
         // 默认返回空，子类可覆盖
         return new HashMap<>();
+    }
+
+    public ToolExecutionResult executeStructured(Map<String, Object> params) {
+        long start = System.currentTimeMillis();
+        try {
+            String result = execute(params);
+            return ToolExecutionResult.builder()
+                    .success(true)
+                    .message("工具执行成功")
+                    .data(result)
+                    .durationMs(System.currentTimeMillis() - start)
+                    .build();
+        } catch (Exception e) {
+            return ToolExecutionResult.builder()
+                    .success(false)
+                    .message("工具执行失败")
+                    .errorCode("TOOL_EXECUTE_ERROR")
+                    .data(null)
+                    .durationMs(System.currentTimeMillis() - start)
+                    .build();
+        }
     }
 }

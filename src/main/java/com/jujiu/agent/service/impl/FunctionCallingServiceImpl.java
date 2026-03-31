@@ -171,20 +171,24 @@ public class FunctionCallingServiceImpl implements FunctionCallingService {
     private String executeTool(ToolCallDTO toolCall) {
         String toolName = toolCall.getFunction().getName();
         String arguments = toolCall.getFunction().getArguments();
-
-        log.info("[FUNCTION_CALLING] 执行工具 - name={}, arguments={}", toolName, arguments);
-
+        
+        long start = System.currentTimeMillis();
+        boolean success = false;
+        String errorMessage = null;
+        
         try {
             // 1. 从ToolRegistry中获取工具
             AbstractTool tool = toolRegistry.getImplementation(toolName);
             if (tool == null) {
+                errorMessage = "工具不存在";
                 log.error("[FUNCTION_CALLING] 工具不存在 - name={}", toolName);
                 return "错误：工具不存在 - " + toolName;
             }
 
             if (arguments == null || arguments.trim().isEmpty()) {
+                errorMessage = "工具参数为空";
                 log.error("[FUNCTION_CALLING] 工具参数为空 - name={}", toolName);
-                return "错误：工具参数为空";
+                return "错误：工具参数为空 - " + toolName;
             }
             // 2. 解析参数（JSON字符串->Map）
             @SuppressWarnings("unchecked")
@@ -192,14 +196,18 @@ public class FunctionCallingServiceImpl implements FunctionCallingService {
 
             // 3. 执行工具
             String result = tool.execute(params);
-            
-            log.info("[FUNCTION_CALLING] 工具执行成功 - name={}, resultLength={}", toolName, result.length());
+            success = true;
             
             return result;
         } catch (Exception e) {
-
-            log.error("[FUNCTION_CALLING] 工具执行失败 - name={}, error={}", toolName, e.getMessage());
+            errorMessage = e.getMessage();
+            log.error("[FUNCTION_CALLING] 工具执行失败 - name={}, error={}", toolName,
+                    e.getMessage());
             return "错误：工具执行失败 - " + e.getMessage();
+        } finally {
+            long durationMs = System.currentTimeMillis() - start;
+            log.info("[TOOL_EXECUTION] toolName={}, success={}, durationMs={}, errorMessage={}",
+                    toolName, success, durationMs, errorMessage);
         }
     }
 

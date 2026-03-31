@@ -42,6 +42,8 @@ public class SecurityConfig {
     @Autowired
     private JwtAuthenticationFilter jwtAuthenticationFilter;
 
+    @Autowired
+    private CorsProperties corsProperties;
     /**
      * 配置 CORS（跨域资源共享）
      * 
@@ -53,7 +55,7 @@ public class SecurityConfig {
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration configuration = new CorsConfiguration();
         // 允许所有来源（生产环境建议限制为具体域名）
-        configuration.setAllowedOriginPatterns(Arrays.asList("*"));
+        configuration.setAllowedOrigins(corsProperties.getAllowedOrigins());
         // 允许的 HTTP 方法
         configuration.setAllowedMethods(Arrays.asList("GET", "POST", "PUT", "DELETE", "OPTIONS"));
         // 允许的请求头
@@ -144,7 +146,8 @@ public class SecurityConfig {
                         .accessDeniedHandler((request, response, accessDeniedException) -> {
                             // 检查是否是 SSE 请求
                             String accept = request.getHeader("Accept");
-                            boolean isSseRequest = "/api/v1/chat/send/stream".equals(request.getRequestURI());
+                            boolean isSseRequest = "/api/v1/chat/send/stream".equals(request.getRequestURI()) 
+                                    || (accept != null && accept.contains("text/event-stream"));
                             if (isSseRequest) {
                                 log.warn("[SECURITY][ACCESS_DENIED] SSE 访问被拒绝 - uri={}", request.getRequestURI());
                                 response.setStatus(HttpServletResponse.SC_FORBIDDEN);
@@ -161,5 +164,7 @@ public class SecurityConfig {
                 // 6. 添加 JWT 认证过滤器
                 .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);
         return http.build();
+        
+        
     }
 }
