@@ -5,30 +5,52 @@ import lombok.Data;
 import java.time.LocalDateTime;
 
 /**
- * @author 17644
+ * 通用响应结果封装类
+ * <p>
+ * 用于统一封装 API 接口的响应数据，包含状态码、消息、数据和响应时间戳。
+ * </p>
+ *
+ * @param <T> 响应数据的类型
+ * @author 居九
  * @version 1.0.0
- * @since 2026/3/20 15:30
+ * @since 2026-03-20
  */
 @Data
 public class Result<T> {
-    // 状态码
+    /**
+     * HTTP 状态码
+     */
     private Integer code; 
     
-    // 状态信息
+    /**
+     * 响应消息
+     */
     private String message;
     
-    // 数据
+    /**
+     * 响应数据
+     */
     private T data;
 
-    // 时间戳
+    /**
+     * 响应时间戳
+     */
     private LocalDateTime timestamp;
     
-    // 私有构造方法，只能通过静态方法创建
+    /**
+     * 私有构造方法，只能通过静态方法创建
+     */
     private Result() {
         this.timestamp = LocalDateTime.now();
     }
 
-    // 成功响应
+    /**
+     * 成功响应（带数据）
+     *
+     * @param data 响应数据
+     * @param <T> 数据类型
+     * @return 成功的响应结果
+     */
     public static <T> Result<T> success(T data) {
         Result<T> result = new Result<>();
         result.setCode(200);
@@ -37,7 +59,14 @@ public class Result<T> {
         return result;
     }
     
-    // 成功响应（自定义消息）
+    /**
+     * 成功响应（自定义消息）
+     *
+     * @param data 响应数据
+     * @param message 响应消息
+     * @param <T> 数据类型
+     * @return 成功的响应结果
+     */
     public static <T> Result<T> success(T data, String message) {
         Result<T> result = new Result<>();
         result.setCode(200);
@@ -46,12 +75,24 @@ public class Result<T> {
         return result;
     }
     
-    // 成功响应（无数据）
+    /**
+     * 成功响应（无数据）
+     *
+     * @param <T> 数据类型
+     * @return 成功的响应结果
+     */
     public static <T> Result<T> success() {
         return success(null);
     }
     
-    // 失败响应（自定义 code 和 message）
+    /**
+     * 失败响应（自定义状态码和消息）
+     *
+     * @param code 错误状态码
+     * @param message 错误消息
+     * @param <T> 数据类型
+     * @return 失败的响应结果
+     */
     public static <T> Result<T> fail(Integer code, String message) {
         Result<T> result = new Result<>();
         result.setCode(code);
@@ -59,7 +100,13 @@ public class Result<T> {
         return result;
     }
     
-    // 失败响应（根据 ResultCode）
+    /**
+     * 失败响应（根据 ResultCode）
+     *
+     * @param resultCode 响应码枚举
+     * @param <T> 数据类型
+     * @return 失败的响应结果
+     */
     public static <T> Result<T> fail(ResultCode resultCode) {
         Result<T> result = new Result<>();
         result.setCode(resultCode.getCode());

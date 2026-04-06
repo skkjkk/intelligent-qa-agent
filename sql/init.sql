@@ -133,6 +133,202 @@ CREATE TABLE `password_reset_token` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='用户密码重置令牌表';
 
 -- =============================================
+-- 8. 知识库文档表（kb_document）
+-- =============================================
+DROP TABLE IF EXISTS `kb_document`;
+CREATE TABLE `kb_document` (
+  `id` BIGINT PRIMARY KEY AUTO_INCREMENT COMMENT '主键ID',
+  `kb_id` BIGINT NOT NULL DEFAULT 1 COMMENT '知识库ID',
+  `title` VARCHAR(255) NOT NULL COMMENT '文档标题',
+  `file_name` VARCHAR(255) NOT NULL COMMENT '原始文件名',
+  `file_type` VARCHAR(32) NOT NULL COMMENT '文件类型：txt/md/pdf/docx/html',
+                               `file_path` VARCHAR(512) NOT NULL COMMENT '对象存储路径',
+                               `file_size` BIGINT NOT NULL DEFAULT 0 COMMENT '文件大小',
+                               `content_hash` VARCHAR(64) NOT NULL COMMENT '内容哈希',
+                               `status` VARCHAR(32) NOT NULL DEFAULT 'PROCESSING' COMMENT '文档状态',
+                               `parse_status` VARCHAR(32) NOT NULL DEFAULT 'PENDING' COMMENT '解析状态',
+                               `index_status` VARCHAR(32) NOT NULL DEFAULT 'PENDING' COMMENT '索引状态',
+                               `chunk_count` INT NOT NULL DEFAULT 0 COMMENT '分块数量',
+                               `owner_user_id` BIGINT NOT NULL COMMENT '所属用户ID',
+                               `visibility` VARCHAR(32) NOT NULL DEFAULT 'PRIVATE' COMMENT '可见性',
+                               `enabled` TINYINT NOT NULL DEFAULT 1 COMMENT '是否启用',
+                               `deleted` TINYINT NOT NULL DEFAULT 0 COMMENT '逻辑删除标记',
+                               `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+                               `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+  COMMENT '更新时间',
+                               UNIQUE KEY `uk_kb_document_hash` (`kb_id`, `content_hash`),
+                               KEY `idx_kb_document_owner` (`owner_user_id`),
+                               KEY `idx_kb_document_status` (`status`),
+                               KEY `idx_kb_document_created_at` (`created_at`),
+                               CONSTRAINT `fk_kb_document_user` FOREIGN KEY (`owner_user_id`) REFERENCES `user` (`id`)
+                                   ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='知识库文档表';
+
+-- =============================================
+-- 9. 知识库文档分块表（kb_chunk）
+-- =============================================
+DROP TABLE IF EXISTS `kb_chunk`;
+CREATE TABLE `kb_chunk` (
+                            `id` BIGINT PRIMARY KEY AUTO_INCREMENT COMMENT '主键ID',
+                            `document_id` BIGINT NOT NULL COMMENT '所属文档ID',
+                            `chunk_index` INT NOT NULL COMMENT '分块序号',
+                            `content` MEDIUMTEXT NOT NULL COMMENT '分块内容',
+                            `summary` VARCHAR(1000) COMMENT '分块摘要',
+                            `char_count` INT NOT NULL DEFAULT 0 COMMENT '字符数',
+                            `token_count` INT NOT NULL DEFAULT 0 COMMENT 'token数',
+                            `keywords` VARCHAR(1000) COMMENT '关键词',
+                            `section_title` VARCHAR(255) COMMENT '章节标题',
+                            `enabled` TINYINT NOT NULL DEFAULT 1 COMMENT '是否启用',
+                            `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+                            `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+  COMMENT '更新时间',
+                            UNIQUE KEY `uk_kb_chunk_doc_idx` (`document_id`, `chunk_index`),
+                            KEY `idx_kb_chunk_document` (`document_id`),
+                            CONSTRAINT `fk_kb_chunk_document` FOREIGN KEY (`document_id`) REFERENCES `kb_document`
+                                (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='知识库文档分块表';
+
+
+-- =============================================
+-- 10. 知识库标签表（kb_tag）
+-- =============================================
+DROP TABLE IF EXISTS `kb_tag`;
+CREATE TABLE `kb_tag` (
+                          `id` BIGINT PRIMARY KEY AUTO_INCREMENT COMMENT '主键ID',
+                          `kb_id` BIGINT NOT NULL DEFAULT 1 COMMENT '知识库ID',
+                          `name` VARCHAR(64) NOT NULL COMMENT '标签名',
+                          `color` VARCHAR(32) COMMENT '标签颜色',
+                          `created_by` BIGINT NOT NULL COMMENT '创建人',
+                          `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+                          `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+  COMMENT '更新时间',
+                          UNIQUE KEY `uk_kb_tag_name` (`kb_id`, `name`),
+                          CONSTRAINT `fk_kb_tag_user` FOREIGN KEY (`created_by`) REFERENCES `user` (`id`) ON
+                              DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='知识库标签表';
+
+-- =============================================
+-- 11. 文档标签关联表（kb_document_tag）
+-- =============================================
+DROP TABLE IF EXISTS `kb_document_tag`;
+CREATE TABLE `kb_document_tag` (
+                                   `id` BIGINT PRIMARY KEY AUTO_INCREMENT COMMENT '主键ID',
+                                   `document_id` BIGINT NOT NULL COMMENT '文档ID',
+                                   `tag_id` BIGINT NOT NULL COMMENT '标签ID',
+                                   `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+                                   UNIQUE KEY `uk_kb_document_tag` (`document_id`, `tag_id`),
+                                   CONSTRAINT `fk_kb_document_tag_document` FOREIGN KEY (`document_id`) REFERENCES
+                                       `kb_document` (`id`) ON DELETE CASCADE,
+                                   CONSTRAINT `fk_kb_document_tag_tag` FOREIGN KEY (`tag_id`) REFERENCES `kb_tag` (`id`)
+                                       ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='文档标签关联表';
+
+-- =============================================
+-- 12. 知识库查询日志表（kb_query_log）
+-- =============================================
+DROP TABLE IF EXISTS `kb_query_log`;
+CREATE TABLE `kb_query_log` (
+                                `id` BIGINT PRIMARY KEY AUTO_INCREMENT COMMENT '主键ID',
+                                `kb_id` BIGINT NOT NULL DEFAULT 1 COMMENT '知识库ID',
+                                `user_id` BIGINT NOT NULL COMMENT '用户ID',
+                                `session_id` VARCHAR(64) COMMENT '会话ID',
+                                `query_source` VARCHAR(32) NOT NULL COMMENT '来源：KB_API/CHAT_ENHANCE/TOOL_CALL',
+                                `question` TEXT NOT NULL COMMENT '用户问题',
+                                `rewritten_question` TEXT COMMENT '改写后的问题',
+                                `answer` MEDIUMTEXT COMMENT '模型答案',
+                                `retrieval_top_k` INT NOT NULL DEFAULT 5 COMMENT '检索TopK',
+                                `retrieval_mode` VARCHAR(32) NOT NULL DEFAULT 'HYBRID' COMMENT '检索模式',
+                                `cited_chunk_ids` JSON COMMENT '引用chunk ID列表',
+                                `prompt_tokens` INT NOT NULL DEFAULT 0 COMMENT '输入token',
+                                `completion_tokens` INT NOT NULL DEFAULT 0 COMMENT '输出token',
+                                `total_tokens` INT NOT NULL DEFAULT 0 COMMENT '总token',
+                                `latency_ms` INT NOT NULL DEFAULT 0 COMMENT '耗时ms',
+                                `status` VARCHAR(32) NOT NULL DEFAULT 'SUCCESS' COMMENT '状态',
+                                `error_message` VARCHAR(1000) COMMENT '错误信息',
+                                `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+                                KEY `idx_kb_query_log_user` (`user_id`),
+                                KEY `idx_kb_query_log_session` (`session_id`),
+                                KEY `idx_kb_query_log_created_at` (`created_at`),
+                                CONSTRAINT `fk_kb_query_log_user` FOREIGN KEY (`user_id`) REFERENCES `user` (`id`) ON
+                                    DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='知识库查询日志表';
+
+-- =============================================
+-- 13. 知识库查询反馈表（kb_query_feedback）
+-- =============================================
+DROP TABLE IF EXISTS `kb_query_feedback`;
+CREATE TABLE `kb_query_feedback` (
+                                     `id` BIGINT PRIMARY KEY AUTO_INCREMENT COMMENT '主键ID',
+                                     `query_log_id` BIGINT NOT NULL COMMENT '查询日志ID',
+                                     `user_id` BIGINT NOT NULL COMMENT '用户ID',
+                                     `helpful` TINYINT NOT NULL COMMENT '是否有帮助',
+                                     `rating` TINYINT COMMENT '评分1-5',
+                                     `feedback_content` VARCHAR(1000) COMMENT '反馈内容',
+                                     `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+                                     KEY `idx_kb_query_feedback_user` (`user_id`),
+                                     CONSTRAINT `fk_kb_query_feedback_log` FOREIGN KEY (`query_log_id`) REFERENCES
+                                         `kb_query_log` (`id`) ON DELETE CASCADE,
+                                     CONSTRAINT `fk_kb_query_feedback_user` FOREIGN KEY (`user_id`) REFERENCES `user` (`id`)
+                                         ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='知识库查询反馈表';
+
+-- =============================================
+-- 14. 文档访问控制表（kb_document_acl）
+-- =============================================
+DROP TABLE IF EXISTS `kb_document_acl`;
+CREATE TABLE `kb_document_acl` (
+                                   `id` BIGINT PRIMARY KEY AUTO_INCREMENT COMMENT '主键ID',
+                                   `document_id` BIGINT NOT NULL COMMENT '文档ID',
+                                   `principal_type` VARCHAR(32) NOT NULL COMMENT '主体类型',
+                                   `principal_id` VARCHAR(64) NOT NULL COMMENT '主体ID',
+                                   `permission` VARCHAR(32) NOT NULL COMMENT '权限：READ/MANAGE',
+                                   `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+                                   UNIQUE KEY `uk_kb_document_acl` (`document_id`, `principal_type`, `principal_id`,
+                                       `permission`),
+                                   CONSTRAINT `fk_kb_document_acl_document` FOREIGN KEY (`document_id`) REFERENCES
+                                       `kb_document` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='文档ACL表';
+
+-- =============================================
+-- 15. 文档处理日志表（kb_document_process_log）
+-- =============================================
+DROP TABLE IF EXISTS `kb_document_process_log`;
+CREATE TABLE `kb_document_process_log` (
+                                           `id` BIGINT PRIMARY KEY AUTO_INCREMENT COMMENT '主键ID',
+                                           `document_id` BIGINT NOT NULL COMMENT '文档ID',
+                                           `stage` VARCHAR(32) NOT NULL COMMENT '阶段',
+                                           `status` VARCHAR(32) NOT NULL COMMENT '状态',
+                                           `message` VARCHAR(1000) COMMENT '阶段说明',
+                                           `retry_count` INT NOT NULL DEFAULT 0 COMMENT '重试次数',
+                                           `started_at` DATETIME COMMENT '开始时间',
+                                           `ended_at` DATETIME COMMENT '结束时间',
+                                           `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+                                           KEY `idx_kb_document_process_log_doc` (`document_id`),
+                                           KEY `idx_kb_document_process_log_stage` (`stage`),
+                                           CONSTRAINT `fk_kb_document_process_log_document` FOREIGN KEY (`document_id`) REFERENCES
+                                               `kb_document` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='文档处理日志表';
+
+-- =============================================
+-- 16. 检索轨迹表（kb_retrieval_trace）
+-- =============================================
+DROP TABLE IF EXISTS `kb_retrieval_trace`;
+CREATE TABLE `kb_retrieval_trace` (
+                                      `id` BIGINT PRIMARY KEY AUTO_INCREMENT COMMENT '主键ID',
+                                      `query_log_id` BIGINT NOT NULL COMMENT '查询日志ID',
+                                      `chunk_id` BIGINT NOT NULL COMMENT '命中文档块ID',
+                                      `score` DECIMAL(10,6) NOT NULL DEFAULT 0 COMMENT '得分',
+                                      `rank_no` INT NOT NULL COMMENT '排序号',
+                                      `retrieval_type` VARCHAR(32) NOT NULL COMMENT '检索类型',
+                                      `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+                                      KEY `idx_kb_retrieval_trace_log` (`query_log_id`),
+                                      CONSTRAINT `fk_kb_retrieval_trace_log` FOREIGN KEY (`query_log_id`) REFERENCES
+                                          `kb_query_log` (`id`) ON DELETE CASCADE,
+                                      CONSTRAINT `fk_kb_retrieval_trace_chunk` FOREIGN KEY (`chunk_id`) REFERENCES `kb_chunk`
+                                          (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='检索轨迹表';
+
+-- =============================================
 -- 初始化数据
 -- =============================================
 

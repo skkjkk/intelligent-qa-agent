@@ -12,6 +12,7 @@ import java.util.Map;
  */
 @Data
 public class ToolDefinition {
+    
     @NotBlank(message = "类型不能为空")
     private String type = "function";
     

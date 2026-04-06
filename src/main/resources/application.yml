@@ -20,3 +20,60 @@ amap:
   weather:
     key: ${AMAP_WEATHER_KEY:}
     url: https://restapi.amap.com/v3/weather/weatherInfo
+
+knowledge-base:
+  # 嵌入式向量
+  embedding:
+    api-url: https://open.bigmodel.cn/api/paas/v4/embeddings
+    api-key: ${KB_EMBEDDING_API_KEY:}
+    model: embedding-3
+    dimension: 2048
+    
+  # Elasticsearch
+  elasticsearch:
+    index-name: kb_chunks_v1
+    top-k: 5
+    enable-hybrid: true
+    
+  # MinIO
+  minio:
+    endpoint: ${KB_MINIO_ENDPOINT:http://localhost:9000}
+    access-key: ${KB_MINIO_ACCESS_KEY:}
+    secret-key: ${KB_MINIO_SECRET_KEY:}
+    bucket-name: intelligent-qa-kb
+    
+  # Kafka
+  kafka:
+    topic-document-process: kb-document-process
+    consumer-concurrency: 1
+  chunking:
+    default-size: 500
+    default-overlap: 50
+    max-size: 1000
+    
+    
+  # RAG配置
+  rag:
+    max-context-chunks: 5
+    enable-rerank: false
+    prompt-template: |
+      你是一个企业知识库问答助手。请严格依据参考资料回答问题。
+      如果参考资料不足以回答，请明确说“知识库中没有足够信息支持回答该问题”。
+      不要编造信息。
+
+      【参考资料】
+      {{context}}
+
+      【问题】
+      {{question}}
+
+      【回答要求】
+      1. 回答必须基于参考资料
+      2. 用中文输出
+      3. 回答尽量简洁但完整
+      4. 如果引用资料，可在句末标注[1]、[2]
+      
+  # 安全配置
+  security:
+    enable-acl: true
+    query-rate-limit: 30

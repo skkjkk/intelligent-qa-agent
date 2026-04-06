@@ -47,7 +47,7 @@ public interface FunctionCallingService {
         // 最终回复
         private String finalReply;
 
-        // 提示词的
+        // 提示词Token数量
         private int promptTokens;
 
         // AI回复的Token数量

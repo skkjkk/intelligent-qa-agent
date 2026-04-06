@@ -7,6 +7,7 @@ import com.jujiu.agent.model.dto.response.ChatResponse;
 import com.jujiu.agent.model.dto.response.SessionDetailResponse;
 import com.jujiu.agent.model.dto.response.SessionResponse;
 import com.jujiu.agent.service.ChatService;
+import com.jujiu.agent.util.SecurityUtils;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
@@ -42,10 +43,7 @@ public class ChatController {
      * @return 当前用户 ID，如果未认证则可能抛出异常
      */
     private Long getCurrentUserId() {
-        // 从 SecurityContext 中获取认证信息
-        UsernamePasswordAuthenticationToken authentication = (UsernamePasswordAuthenticationToken) SecurityContextHolder.getContext().getAuthentication();
-        // 返回存储在 authentication details 中的用户 ID
-        return (Long) authentication.getDetails();
+        return SecurityUtils.getCurrentUserId();
     }
 
     @Operation(summary = "创建会话", description = "创建新的对话会话")

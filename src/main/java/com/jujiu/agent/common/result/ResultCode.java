@@ -45,6 +45,8 @@ public enum ResultCode {
      */
     METHOD_NOT_ALLOWED(405, "请求方法不支持"),
 
+    
+    /***********************业务错误码************************/
     /**
      * 业务错误 1xxx
      */
@@ -96,7 +98,12 @@ public enum ResultCode {
      */
     SESSION_NOT_FOUND(2001, "会话不存在或无权限"),
 
-
+    /**
+     * 无效的参数
+     */
+    INVALID_PARAMETER(1012, "无效的参数"),
+    
+    /***********************DeepSeek相关错误码************************/
     /**
      * DeepSeek API 返回空结果
      */
@@ -119,6 +126,70 @@ public enum ResultCode {
      * 限流配置非法
      */
     RATE_LIMIT_CONFIG_INVALID(3004, "限流配置非法"),
+
+    
+    
+    /***********************文档相关错误码************************/
+    /**
+     * MinIO 文件获取失败
+     */
+    MINIO_FILE_GET_FAILED(4001, "MinIO 文件获取失败"),
+
+    /**
+     * MinIO 文件删除失败
+     */
+    MINIO_FILE_DELETE_FAILED(4002, "MinIO 文件删除失败"),
+    
+    /**
+     * MinIO 文件上传失败
+     */
+    MINIO_FILE_UPLOAD_FAILED(4003, "MinIO 文件上传失败"),
+
+    /**
+     * MinIO 桶初始化失败
+     */
+    MINIO_BUCKET_INIT_FAILED(4004, "MinIO 桶初始化失败"),
+
+    /**
+     * 不支持的文件类型
+     */
+    UNSUPPORTED_DOCUMENT_TYPE(4005, "不支持的文档类型"),
+    
+    /**
+     * 文档解析失败
+     */
+    DOCUMENT_PARSE_ERROR(4006, "文档解析失败"),
+
+    /**
+     * 文件哈希值错误
+     */
+    FILE_HASH_ERROR(4007, "文件哈希值错误"),
+    
+    /**
+     * 文档重复
+     */
+    DOCUMENT_DUPLICATE(4008, "文档重复"),
+
+    /**
+     * 文档不存在
+     */
+    DOCUMENT_NOT_FOUND(4009, "文档不存在"),
+    
+    /**
+     * 文件读取错误
+     */
+    FILE_READ_ERROR(4010, "文件读取错误"),
+
+    /**
+     * Kafka 发送消息失败
+     */
+    KAFKA_SEND_FAILED(4011, "Kafka 发送消息失败"),
+    
+    
+    
+    
+    
+    
     /**
      * 服务器内部错误
      */

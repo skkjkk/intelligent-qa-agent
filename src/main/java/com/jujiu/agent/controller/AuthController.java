@@ -5,6 +5,7 @@ import com.jujiu.agent.model.dto.request.*;
 import com.jujiu.agent.model.dto.response.LoginResponse;
 import com.jujiu.agent.model.dto.response.UserInfoResponse;
 import com.jujiu.agent.service.AuthService;
+import com.jujiu.agent.util.SecurityUtils;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
@@ -31,9 +32,7 @@ public class AuthController {
     private AuthService authService;
 
     private Long getCurrentUserId() {
-        UsernamePasswordAuthenticationToken auth =
-                (UsernamePasswordAuthenticationToken) SecurityContextHolder.getContext().getAuthentication();
-        return (Long) auth.getDetails();
+        return SecurityUtils.getCurrentUserId();
     }
     
     @Operation(summary = "用户登录", description = "用户登录接口")

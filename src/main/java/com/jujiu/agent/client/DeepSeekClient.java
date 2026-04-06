@@ -192,94 +192,22 @@ public class DeepSeekClient {
                 .filter(content -> content != null && !content.isEmpty()
                 );
     }
-
-    /**
-     * 流式对话（带 Token 统计）
-     * 返回 Flux<StreamResult>，包含内容片段和最后的 token 用量信息
-     *
-     * @param messages 对话消息列表
-     * @return Flux<StreamResult> 流式响应结果
-     */
-    public Flux<StreamResult> chatStreamWithUsage(List<DeepSeekMessage> messages) {
-        // 1. 构建请求体
-        DeepSeekRequest request = new DeepSeekRequest();
-        request.setMessages(messages);
-        request.setModel(deepSeekProperties.getModel());
-        request.setStream(true);
-        request.setTemperature(deepSeekProperties.getTemperature());
-
-        // 2. 使用 WebClient 发送请求并获取流式响应
-        return webClientConfig.webClientBuilder().build()
-                .post()
-                .uri(deepSeekProperties.getBaseUrl() + "/chat/completions")
-                .header("Authorization", "Bearer " + deepSeekProperties.getApiKey())
-                .header("Content-Type", "application/json")
-                .bodyValue(request)
-                .retrieve()
-                .bodyToFlux(String.class)
-                // 过滤空行和 [DONE]
-                .filter(line -> line != null && !line.isEmpty() && !line.contains(BusinessConstants.SSE_DONE))
-                .map(line -> {
-                    try {
-                        // 去掉 "data: " 前缀
-                        String data = line.startsWith("data: ") ? line.substring(6) : line;
-                        if (BusinessConstants.SSE_DONE.equals(data)) {
-                            return StreamResult.end(null);
-                        }
-
-                        // 解析 JSON
-                        StreamResponse response = objectMapper.readValue(data, StreamResponse.class);
-                        if (response == null || response.getChoices() == null || response.getChoices().isEmpty()) {
-                            return StreamResult.content("");
-                        }
-
-                        StreamResponse.StreamChoice choice = response.getChoices().get(0);
-
-                        // 调试日志：检查解析后的response结构
-                        if (response.getUsage() != null) {
-                            log.debug("[DEEPSEEK][STREAM_PARSE_DEBUG] 解析到usage信息 - promptTokens={}, completionTokens={}, totalTokens={}, finish_reason={}",
-                                    response.getUsage().getPromptTokens(),
-                                    response.getUsage().getCompletionTokens(),
-                                    response.getUsage().getTotalTokens(),
-                                    choice.getFinishReason());
-                        }
-
-                        // 检查是否是最后一条消息（有 usage 信息）
-                        if (choice.getFinishReason() != null && "stop".equals(choice.getFinishReason())) {
-                            // 最后一条，返回 token 信息
-                            if (response.getUsage() != null) {
-                                // 安全创建 StreamUsage，防止字段为 null
-                                StreamResponse.StreamUsage usage = response.getUsage();
-                                StreamResponse.StreamUsage safeUsage = new StreamResponse.StreamUsage(
-                                        usage.getPromptTokens() != null ? usage.getPromptTokens() : 0,
-                                        usage.getCompletionTokens() != null ? usage.getCompletionTokens() : 0,
-                                        usage.getTotalTokens() != null ? usage.getTotalTokens() : 0
-                                );
-                                return StreamResult.end(safeUsage);
-                            }
-                            return StreamResult.end(null);
-                        }
-
-                        // 普通内容消息
-                        StreamResponse.StreamDelta delta = choice.getDelta();
-                        if (delta == null || delta.getContent() == null) {
-                            return StreamResult.content("");
-                        }
-                        return StreamResult.content(delta.getContent());
-
-                    } catch (Exception e) {
-                        log.error("[DEEPSEEK][STREAM_PARSE_ERROR] 流式响应解析错误 - line={}", line, e);
-                        return StreamResult.content("");
-                    }
-                })
-                .filter(result -> result != null && (result.isEnd() || (result.getContent() != null && !result.getContent().isEmpty())));
-    }
     
+    /**
+     * 带工具的对话
+     * 向 DeepSeek API 发送支持 Function Calling 的请求，允许 AI 调用指定的工具来完成复杂任务。
+     * 该方法会阻塞等待 API 完整响应，返回最终结果和 Token 使用统计。
+     *
+     * @param messages 对话消息列表，包含完整的对话历史上下文
+     * @param tools 工具定义列表，指定 AI 可调用的所有工具及其参数格式
+     * @return DeepSeekResult 对话结果，包含 AI 回复内容、Token 统计信息和工具调用信息
+     * @throws BusinessException 当 API 返回空响应或格式异常时抛出
+     */
     public DeepSeekResult chatWithTools(List<DeepSeekMessage> messages, List<ToolDefinition> tools) {
         log.info("[DEEPSEEK][CHAT_WITH_TOOLS] 开始对话 - messageCount={}, toolCount={}",
                 messages.size(), tools.size());
         
-        // 1. 构建请求参数
+        // 构建 DeepSeek API 请求参数
         DeepSeekRequest request = new DeepSeekRequest();
         request.setModel(deepSeekProperties.getModel());
         request.setTools(tools);
@@ -289,16 +217,16 @@ public class DeepSeekClient {
         log.debug("[DEEPSEEK][CHAT_WITH_TOOLS] 请求参数构建完成 - messageCount={}, toolCount={}",
                 messages.size(), tools.size());
         
-        // 2. 构建请求头
+        // 构建 HTTP 请求头
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_JSON);
         headers.setBearerAuth(deepSeekProperties.getApiKey());
         
-        // 3. 打包请求体和请求头
+        // 封装请求体和请求头
         HttpEntity<DeepSeekRequest> entity = new HttpEntity<>(request, headers);
         
-        // 4. 发送POST请求，获取响应
-        log.info("[DEEPSEEK][CHAT_WITH_TOOLS] 发送POST请求 - url={}, entity={}", 
+        // 发送 POST 请求到 DeepSeek API
+        log.info("[DEEPSEEK][CHAT_WITH_TOOLS] 发送 POST 请求 - url={}, entity={}", 
                 deepSeekProperties.getBaseUrl() + "/chat/completions", entity.getBody());
         long startTime = System.currentTimeMillis();
 
@@ -312,13 +240,13 @@ public class DeepSeekClient {
         log.info("[DEEPSEEK][CHAT_WITH_TOOLS] DeepSeek API 请求完成 - costTime={}ms, response={}",
                 costTime, response != null ? "not null" : "null");
         
-        // 5.值检查，防止NullPointerException
+        // 检查 API 响应是否为空，防止 NullPointerException
         if (response == null || response.getChoices() == null || response.getChoices().isEmpty()) {
-            log.error("[DEEPSEEK][CHAT_WITH_TOOLS] DeepSeek API响应为空");
+            log.error("[DEEPSEEK][CHAT_WITH_TOOLS] DeepSeek API 响应为空");
             throw new BusinessException(ResultCode.DEEPSEEK_API_RETURN_NULL);
          }
         
-        // 6. 获取第一个选择
+        // 获取第一个选择（DeepSeek 默认只返回一个）
         DeepSeekResponse.Choice choice = response.getChoices().get(0);
         if (choice == null || choice.getMessage() == null) {
             log.error("[DEEPSEEK][PARSE_ERROR] API 返回的消息格式异常 - choice={}, message={},",
@@ -326,17 +254,18 @@ public class DeepSeekClient {
             throw new BusinessException(ResultCode.DEEPSEEK_API_RETURN_FORMAT_ERROR);
         }
         
-        log.debug("[DEEPSEEK][CHAT_WITH_TOOLS] DeepSeek工具调用成功 - tools={}, response={}", tools, response);
+        log.debug("[DEEPSEEK][CHAT_WITH_TOOLS] DeepSeek 工具调用成功 - tools={}, response={}", tools, response);
         
-        // 7 .返回AI回复内容
+        // 提取 Token 使用统计信息
         DeepSeekResponse.Usage usage = response.getUsage();
         int totalTokens = usage != null ? usage.getTotalTokens() : 0;
         int promptTokens = usage != null ? usage.getPromptTokens() : 0;
         int completionTokens = usage != null ? usage.getCompletionTokens() : 0;
         
-        log.debug("[DEEPSEEK][CHAT_WITH_TOOLS] DeepSeek API TOKEN使用情况 - totalTokens={}, promptTokens={}, completionTokens={}",
+        log.debug("[DEEPSEEK][CHAT_WITH_TOOLS] DeepSeek API TOKEN 使用情况 - totalTokens={}, promptTokens={}, completionTokens={}",
                 totalTokens, promptTokens, completionTokens);
 
+        // 构建并返回结果对象
         return new DeepSeekResult(
                 choice.getMessage().getContent(),
                 totalTokens,
@@ -346,19 +275,28 @@ public class DeepSeekClient {
         );
     }
 
+    /**
+     * 带工具的流式对话
+     * 向 DeepSeek API 发送支持 Function Calling 的流式请求，返回包含内容增量和工具调用增量的响应流。
+     * 使用 SSE（Server-Sent Events）协议接收实时数据，自动处理 [DONE] 结束标记和 usage 统计信息。
+     *
+     * @param messages 对话消息列表，包含完整的对话历史上下文
+     * @param tools 工具定义列表，指定 AI 可调用的所有工具及其参数格式
+     * @return Flux<ToolStreamChunk> 流式响应，每个 chunk 包含内容增量、工具调用增量或结束信息
+     */
     public Flux<ToolStreamChunk> chatStreamWithTools(
             List<DeepSeekMessage> messages,
             List<ToolDefinition> tools) {
-
-        // 1. 构建请求体
+    
+        // 构建 DeepSeek API 请求体
         DeepSeekRequest request = new DeepSeekRequest();
         request.setMessages(messages);
         request.setModel(deepSeekProperties.getModel());
         request.setTools(tools);
         request.setStream(true);
         request.setTemperature(deepSeekProperties.getTemperature());
-
-        // 添加详细日志：打印所有消息
+    
+        // 打印详细的请求日志，包括所有消息的内容预览
         log.info("[DEEPSEEK][STREAM_WITH_TOOLS] 发送请求 - messageCount={}, toolCount={}", messages.size(), tools.size());
         for (int i = 0; i < messages.size(); i++) {
             DeepSeekMessage msg = messages.get(i);
@@ -368,8 +306,8 @@ public class DeepSeekClient {
                 msg.getToolCalls() != null && !msg.getToolCalls().isEmpty(),
                 msg.getToolCallId());
         }
-
-        // 2. 使用 WebClient 发送请求并获取流式响应
+    
+        // 使用 WebClient 发送 POST 请求并获取流式响应
         return webClientConfig.webClientBuilder().build()
                 .post()
                 .uri(deepSeekProperties.getBaseUrl() + "/chat/completions")
@@ -378,55 +316,57 @@ public class DeepSeekClient {
                 .bodyValue(request)
                 .retrieve()
                 .bodyToFlux(String.class)
+                // 过滤空行
                 .filter(line -> line != null && !line.isEmpty())
                 .map(line -> {
                     try {
-                        // 去掉 "data: " 前缀
+                        // 去掉 "data: " 前缀，提取纯 JSON 数据
                         String data = line.startsWith("data: ") ? line.substring(6) : line;
-
-                        // 检查是否为[DONE]
+    
+                        // 检查是否为 [DONE] 结束标记
                         if (BusinessConstants.SSE_DONE.equals(data)) {
-                            // 如果是[DONE]，返回结束块
+                            // 如果是 [DONE]，返回结束块
                             return ToolStreamChunk.end("stop", null);
                         }
-
-                        // 解析 JSON
+    
+                        // 解析 JSON 为 StreamResponse 对象
                         StreamResponse response = objectMapper.readValue(data, StreamResponse.class);
                         if (response == null || response.getChoices() == null || response.getChoices().isEmpty()) {
                             // 解析失败或结构异常，返回空内容块
                             return ToolStreamChunk.delta(null, null, null);
                         }
-
-                        // 获取第一个choice
+    
+                        // 获取第一个 choice（DeepSeek 默认只返回一个）
                         StreamResponse.StreamChoice choice = response.getChoices().get(0);
                         if (choice == null) {
                             return ToolStreamChunk.delta(null, null, null);
                         }
-
-                        // 获取delta内容和工具调用增量
+    
+                        // 获取 delta 增量对象
                         StreamResponse.StreamDelta delta = choice.getDelta();
-
+    
                         String content = null;
                         List<StreamResponse.StreamToolCallDelta> toolCalls = null;
-
+    
                         if (delta != null) {
                             content = delta.getContent();
                             toolCalls = delta.getToolCalls();
                         }
-
+    
                         if (response.getUsage() != null) {
-                            // 如果有usage，返回结束块
+                            // 如果有 usage 统计信息，返回结束块
                             return ToolStreamChunk.end(choice.getFinishReason(), response.getUsage());
                         }
-
+    
+                        // 返回包含内容和工具调用的增量块
                         return ToolStreamChunk.delta(content, toolCalls, choice.getFinishReason());
-
+    
                     } catch (Exception e) {
                         log.error("[DEEPSEEK][STREAM_WITH_TOOLS_PARSE_ERROR] 流式工具响应解析失败 - line={}", line, e);
                         return ToolStreamChunk.delta(null, null, null);
                     }
                 })
-                // 过滤掉内容和工具调用都为空的块，保留有实际内容或工具调用的块，以及结束块
+                // 过滤掉无意义的空块，只保留有实际内容、工具调用或结束的块
                 .filter(chunk -> 
                         chunk != null && (chunk.isEnd() 
                                 || (chunk.getContent() != null && !chunk.getContent().isEmpty()) 

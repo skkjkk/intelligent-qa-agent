@@ -26,6 +26,7 @@ import com.jujiu.agent.service.ChatPersistenceService;
 import com.jujiu.agent.service.ChatRateLimitService;
 import com.jujiu.agent.service.ChatService;
 import com.jujiu.agent.service.FunctionCallingService;
+import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
@@ -204,6 +205,7 @@ public class ChatServiceImpl implements ChatService {
         log.info("[CHAT][SEND_MESSAGE] 收到发送消息请求 - userId={}, sessionId={}, messageLength={}", 
                 userId, request.getSessionId(), request.getMessage().length());
 
+        // 1. 准备会话和消息
         ChatPrepareResult prepareResult = prepareChat(userId, request);
         Session session = prepareResult.getSession();
         Message message = prepareResult.getUserMessage();
@@ -252,6 +254,7 @@ public class ChatServiceImpl implements ChatService {
                 .timestamp(LocalDateTime.now())
                 .build();
     }
+    
     @Override
     public SessionResponse createSession(Long userId, CreateSessionRequest request) {
         log.info("[CHAT][CREATE_SESSION] 收到创建会话请求 - userId={}, title={}", userId, request.getTitle());
@@ -312,7 +315,16 @@ public class ChatServiceImpl implements ChatService {
         );
     }
 
+    /**
+     * 构建多轮对话上下文
+     * 将历史消息转换为 DeepSeek API 所需的格式，并在开头添加系统提示词。
+     * 支持普通消息、工具调用请求和工具执行结果的转换。
+     *
+     * @param historyMessages 历史消息列表，包含当前会话的所有历史对话记录
+     * @return List<DeepSeekMessage> 构建完成的对话上下文，包含系统消息和历史对话
+     */
     private List<DeepSeekMessage> buildChatContext(List<Message> historyMessages) {
+        // 将历史消息转换为 DeepSeekMessage 格式
         List<DeepSeekMessage> deepSeekMessages = new ArrayList<>(historyMessages.stream()
                 .map(msg -> {
                     DeepSeekMessage deepSeekMessage = new DeepSeekMessage();
@@ -320,6 +332,7 @@ public class ChatServiceImpl implements ChatService {
                             DeepSeekMessage.MessageRole.fromValue(msg.getRole());
                     deepSeekMessage.setRole(role);
 
+                    // 根据消息角色设置内容（TOOL 类型需要特殊处理空内容）
                     String content = msg.getContent();
                     if (role == DeepSeekMessage.MessageRole.TOOL) {
                         deepSeekMessage.setContent(content != null && !content.isEmpty() ?
@@ -329,6 +342,7 @@ public class ChatServiceImpl implements ChatService {
                                 null : content);
                     }
 
+                    // 解析并设置工具调用信息
                     if (msg.getToolCalls() != null && !msg.getToolCalls().isEmpty()) {
                         try {
                             List<ToolCallDTO> toolCalls = objectMapper.readValue(
@@ -342,6 +356,7 @@ public class ChatServiceImpl implements ChatService {
                         }
                     }
 
+                    // 设置工具调用 ID
                     if (msg.getToolCallId() != null && !msg.getToolCallId().isEmpty()) {
                         deepSeekMessage.setToolCallId(msg.getToolCallId());
                     }
@@ -349,6 +364,7 @@ public class ChatServiceImpl implements ChatService {
                     return deepSeekMessage;
                 }).toList());
         
+        // 在消息列表开头添加系统提示词
         DeepSeekMessage systemMessage = new DeepSeekMessage();
         systemMessage.setRole(DeepSeekMessage.MessageRole.SYSTEM);
         systemMessage.setContent(deepSeekProperties.getSystemPrompt());
@@ -357,8 +373,16 @@ public class ChatServiceImpl implements ChatService {
         return deepSeekMessages;
     }
 
+    /**
+     * 准备聊天对话
+     * 执行聊天前的所有准备工作，包括会话验证、限流检查、消息保存和上下文构建。
+     *
+     * @param userId 用户 ID，用于标识当前登录用户
+     * @param request 发送消息的请求对象，包含会话 ID 和消息内容
+     * @return ChatPrepareResult 聊天准备结果，包含会话信息、用户消息和对话上下文
+     */
     private ChatPrepareResult prepareChat(Long userId, SendMessageRequest request) {
-        // 1. 校验会话是否存在且属于当前用户
+        // 校验会话是否存在且属于当前用户
         Session session = sessionRepository.selectOne(
                 new LambdaQueryWrapper<Session>()
                         .eq(Session::getSessionId, request.getSessionId())
@@ -368,14 +392,14 @@ public class ChatServiceImpl implements ChatService {
             throw new BusinessException(ResultCode.SESSION_NOT_FOUND);
         }
         
-        // 2. 执行限流检查，防止 API 调用频率过高
+        // 执行限流检查，防止 API 调用频率过高
         chatRateLimitService.checkChatRateLimit(userId);
 
-        // 3. 保存用户消息
+        // 保存用户消息
         Message userMessage = chatPersistenceService.saveUserMessage(request.getSessionId(),
                 request.getMessage());
 
-        // 4. 如果是会话的第一条消息，自动生成会话标题
+        // 如果是会话的第一条消息，自动生成会话标题
         if (session.getMessageCount() == 0) {
             String title = generateTitle(request.getMessage());
             chatPersistenceService.updateSessionTitle(session, title);
@@ -383,16 +407,21 @@ public class ChatServiceImpl implements ChatService {
                     request.getSessionId());
         }
 
-        // 5. 查询历史消息，构建多轮对话上下文
+        // 查询历史消息，构建多轮对话上下文
         List<Message> historyMessages = loadHistoryMessages(request.getSessionId());
         
-        // 6. 构建多轮对话上下文
+        // 构建多轮对话上下文
         List<DeepSeekMessage> deepSeekMessages = buildChatContext(historyMessages);
 
         return new ChatPrepareResult(session, userMessage, deepSeekMessages);
     }
 
 
+    /**
+     * 聊天准备结果
+     * 封装 prepareChat 方法返回的结果数据
+     */
+    @Getter
     private static class ChatPrepareResult {
         private final Session session;
         private final Message userMessage;
@@ -403,18 +432,6 @@ public class ChatServiceImpl implements ChatService {
             this.session = session;
             this.userMessage = userMessage;
             this.deepSeekMessages = deepSeekMessages;
-        }
-
-        public Session getSession() {
-            return session;
-        }
-
-        public Message getUserMessage() {
-            return userMessage;
-        }
-
-        public List<DeepSeekMessage> getDeepSeekMessages() {
-            return deepSeekMessages;
         }
     }
     
@@ -434,14 +451,18 @@ public class ChatServiceImpl implements ChatService {
         // 1. 创建 SseEmitter，设置 3 分钟超时时间
         SseEmitter emitter = new SseEmitter(BusinessConstants.SSE_TIMEOUT);
         
+        // 2. 准备聊天对话
         ChatPrepareResult prepareResult = prepareChat(userId, request);
+        
+        // 3. 获取会话信息、用户消息和对话上下文
         Session session = prepareResult.getSession();
         Message message = prepareResult.getUserMessage();
         List<DeepSeekMessage> deepSeekMessages = prepareResult.getDeepSeekMessages();
 
-        // 提交到线程池
+        // 4 提交到线程池
         chatExecutor.submit(() -> {
             try {
+                // 调用 DeepSeek 流式接口
                 FunctionCallingService.StreamingChatResult result = functionCallingService.streamChatWithTools(
                         deepSeekMessages,
                         event -> {
