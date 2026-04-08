@@ -76,4 +76,15 @@ public interface DocumentService {
      */
     DocumentProcessStatusResponse getDocumentStatus(Long userId, Long documentId);
     
+    /**
+     * 索引所有待处理的文档。
+     */
+    void indexPendingDocuments();
+    
+    /**
+     * 索引文档。
+     *
+     * @param documentId 文档 ID
+     */
+    void indexDocument(Long documentId);
 }

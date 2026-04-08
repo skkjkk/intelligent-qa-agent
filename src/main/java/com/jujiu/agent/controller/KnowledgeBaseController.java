@@ -1,13 +1,17 @@
 package com.jujiu.agent.controller;
 
 import com.jujiu.agent.common.result.Result;
+import com.jujiu.agent.model.dto.request.QueryKnowledgeBaseRequest;
 import com.jujiu.agent.model.dto.request.UploadDocumentRequest;
 import com.jujiu.agent.model.dto.response.DocumentProcessStatusResponse;
 import com.jujiu.agent.model.dto.response.KbDocumentResponse;
+import com.jujiu.agent.model.dto.response.KnowledgeQueryResponse;
 import com.jujiu.agent.service.kb.DocumentService;
+import com.jujiu.agent.service.kb.RagService;
 import com.jujiu.agent.util.SecurityUtils;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.validation.Valid;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.*;
@@ -28,9 +32,12 @@ public class KnowledgeBaseController {
 
 
     private final DocumentService documentService;
+    private final RagService ragService;
 
-    public KnowledgeBaseController(DocumentService documentService) {
+    public KnowledgeBaseController(DocumentService documentService,
+                                   RagService ragService) {
         this.documentService = documentService;
+        this.ragService = ragService;
     }
     
     /**
@@ -82,18 +89,21 @@ public class KnowledgeBaseController {
     }
 
     @GetMapping
+    @Operation(summary = "查询文档列表")
     public Result<List<KbDocumentResponse>> listDocuments(@RequestParam(value = "kbId", required = false) Long kbId) {
         Long userId = getCurrentUserId();
         return Result.success(documentService.listDocuments(userId, kbId));
     }
 
     @GetMapping("/{documentId}/status")
+    @Operation(summary = "查询文档处理状态")
     public Result<DocumentProcessStatusResponse> getDocumentStatus(@PathVariable Long documentId) {
         Long userId = getCurrentUserId();
         return Result.success(documentService.getDocumentStatus(userId, documentId));
     }
 
     @DeleteMapping("/{documentId}")
+    @Operation(summary = "删除文档")
     public Result<Void> deleteDocument(@PathVariable Long documentId) {
         Long userId = getCurrentUserId();
         documentService.deleteDocument(userId, documentId);
@@ -101,6 +111,25 @@ public class KnowledgeBaseController {
     }
     
     
-    
-   
+    @PostMapping("/query")
+    @Operation(summary = "知识库问答", description = "基于知识库文档进行检索问答并返回引用信息")
+    public Result<KnowledgeQueryResponse> query(@RequestBody @Valid QueryKnowledgeBaseRequest request) {
+        Long userId = getCurrentUserId();
+        KnowledgeQueryResponse response = ragService.query(userId, request);
+        return Result.success(response);
+    }
+
+    @PostMapping("/{documentId}/index")
+    @Operation(summary = "手动触发文档索引", description = "将指定文档的分块写入 Elasticsearch")
+    public Result<Void> indexDocument(@PathVariable Long documentId) {
+        documentService.indexDocument(documentId);
+        return Result.success(null, "文档索引任务执行成功");
+    }
+
+    @PostMapping("/index/pending")
+    @Operation(summary = "批量索引待处理文档", description = "批量索引所有已解析成功但尚未完成索引的文档")
+    public Result<Void> indexPendingDocuments() {
+        documentService.indexPendingDocuments();
+        return Result.success(null, "待处理文档索引任务执行成功");
+    }
 }

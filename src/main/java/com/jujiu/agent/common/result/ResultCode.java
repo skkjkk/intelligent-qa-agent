@@ -184,9 +184,11 @@ public enum ResultCode {
      * Kafka 发送消息失败
      */
     KAFKA_SEND_FAILED(4011, "Kafka 发送消息失败"),
-    
-    
-    
+
+    /**
+     * 服务尚未实现
+     */
+    SYSTEM_ERROR(4012, "服务尚未实现"),
     
     
     

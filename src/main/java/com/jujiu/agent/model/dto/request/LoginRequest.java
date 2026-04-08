@@ -13,12 +13,12 @@ import lombok.Data;
 @Data
 public class LoginRequest {
     
-    @Schema(description = "用户名", example = "admin", requiredMode = Schema.RequiredMode.REQUIRED)
+    @Schema(description = "用户名", example = "adminSuper", requiredMode = Schema.RequiredMode.REQUIRED)
     @NotBlank(message = "用户名不能为空")
     @Size(min = 4, max = 20, message = "用户名长度必须在 4-20 个字符之间")
     private String username;
     
-    @Schema(description = "密码", example = "123456", requiredMode = Schema.RequiredMode.REQUIRED)
+    @Schema(description = "密码", example = "Wkb111111", requiredMode = Schema.RequiredMode.REQUIRED)
     @NotBlank(message = "密码不能为空")
     @Size(min = 8, max = 20, message = "密码长度必须在 8-20 个字符之间")
     private String password;

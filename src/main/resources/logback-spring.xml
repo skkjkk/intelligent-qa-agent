@@ -40,6 +40,9 @@
         <logger name="com.jujiu.agent" level="WARN"/>
     </springProfile>
 
+    <logger name="org.apache.kafka.clients" level="WARN"/>
+    <logger name="org.springframework.kafka" level="WARN"/>
+
 
     <root level="INFO">
         <appender-ref ref="CONSOLE"/>

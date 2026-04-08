@@ -7,6 +7,7 @@ import com.jujiu.agent.common.result.ResultCode;
 import com.jujiu.agent.model.dto.request.UploadDocumentRequest;
 import com.jujiu.agent.model.dto.response.DocumentProcessStatusResponse;
 import com.jujiu.agent.model.dto.response.KbDocumentResponse;
+import com.jujiu.agent.model.entity.KbChunk;
 import com.jujiu.agent.model.entity.KbDocument;
 import com.jujiu.agent.model.entity.KbDocumentProcessLog;
 import com.jujiu.agent.model.enums.KbDocumentStatus;
@@ -14,9 +15,11 @@ import com.jujiu.agent.model.enums.KbProcessStage;
 import com.jujiu.agent.model.enums.KbProcessStatus;
 import com.jujiu.agent.model.event.DocumentProcessEvent;
 import com.jujiu.agent.mq.DocumentProcessProducer;
+import com.jujiu.agent.repository.KbChunkRepository;
 import com.jujiu.agent.repository.KbDocumentProcessLogRepository;
 import com.jujiu.agent.repository.KbDocumentRepository;
 import com.jujiu.agent.service.kb.DocumentService;
+import com.jujiu.agent.service.kb.ElasticsearchIndexService;
 import com.jujiu.agent.storage.MinioFileService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -45,14 +48,19 @@ public class DocumentServiceImpl implements DocumentService {
     private final KbDocumentRepository kbDocumentRepository;
     private final KbDocumentProcessLogRepository kbDocumentProcessLogRepository;
     private final DocumentProcessProducer documentProcessProducer;
-
+    private final KbChunkRepository kbChunkRepository;
+    private final ElasticsearchIndexService elasticsearchIndexService;
     public DocumentServiceImpl(MinioFileService minioFileService, 
                                KbDocumentRepository kbDocumentRepository, 
                                KbDocumentProcessLogRepository kbDocumentProcessLogRepository, 
+                               KbChunkRepository kbChunkRepository, 
+                               ElasticsearchIndexService elasticsearchIndexService, 
                                DocumentProcessProducer documentProcessProducer) {
         this.minioFileService = minioFileService;
         this.kbDocumentRepository = kbDocumentRepository;
+        this.kbChunkRepository = kbChunkRepository;
         this.kbDocumentProcessLogRepository = kbDocumentProcessLogRepository;
+        this.elasticsearchIndexService = elasticsearchIndexService;
         this.documentProcessProducer = documentProcessProducer;
     }
 
@@ -93,7 +101,7 @@ public class DocumentServiceImpl implements DocumentService {
         KbDocument document = buildDocument(userId, request, file, type, objectName, contentHash, originalFilename);
         kbDocumentRepository.insert(document);
     
-        // 记录上传成功的处理日志
+        // 记录上传成功地处理日志
         insertUploadLog(document.getId());
             
         // 发送 Kafka 事件，触发后续的文档解析和分块处理流程
@@ -124,25 +132,13 @@ public class DocumentServiceImpl implements DocumentService {
     
     /**
      * 插入上传日志
-     * 记录文档上传成功的处理日志，包括处理阶段、状态、时间等信息。
+     * 记录文档上传成功地处理日志，包括处理阶段、状态、时间等信息。
      * 日志用于追踪文档处理历史和故障排查。
      *
      * @param documentId 文档 ID，标识需要记录日志的文档
      */
     private void insertUploadLog(Long documentId) {
-        // 构建上传成功的处理日志对象
-        KbDocumentProcessLog processLog = KbDocumentProcessLog.builder()
-                .documentId(documentId)
-                .stage(KbProcessStage.UPLOAD.name())
-                .status(KbProcessStatus.SUCCESS.name())
-                .message("文件上传成功")
-                .retryCount(0)
-                .startedAt(LocalDateTime.now())
-                .endedAt(LocalDateTime.now())
-                .createdAt(LocalDateTime.now())
-                .build();
-        // 保存日志到数据库
-        kbDocumentProcessLogRepository.insert(processLog);
+        insertProcessLog(documentId, KbProcessStage.UPLOAD, KbProcessStatus.SUCCESS, "文件上传成功");
     }
     
     
@@ -396,6 +392,168 @@ public class DocumentServiceImpl implements DocumentService {
                 .chunkCount(document.getChunkCount())
                 .updatedAt(document.getUpdatedAt())
                 .build();
+    }
+
+    /**
+     * 索引所有待处理的文档。
+     *
+     * <p>当前版本筛选条件为：
+     * <ul>
+     *     <li>文档未删除</li>
+     *     <li>文档启用中</li>
+     *     <li>解析已成功</li>
+     *     <li>索引状态为 PENDING 或 FAILED</li>
+     * </ul>
+     *
+     * <p>后续可在该方法基础上扩展批量调度、分页处理与失败重试能力。
+     */
+    @Override
+    public void indexPendingDocuments() {
+        log.info("[KB][INDEX] 开始批量索引待处理文档");
+
+        List<KbDocument> pendingDocuments = kbDocumentRepository.selectList(
+                new LambdaQueryWrapper<KbDocument>()
+                        .eq(KbDocument::getDeleted, 0)
+                        .eq(KbDocument::getEnabled, 1)
+                        .eq(KbDocument::getParseStatus, KbProcessStatus.SUCCESS.name())
+                        .and(wrapper -> wrapper
+                                .eq(KbDocument::getIndexStatus, KbProcessStatus.PENDING.name())
+                                .or()
+                                .eq(KbDocument::getIndexStatus, KbProcessStatus.FAILED.name()))
+                        .orderByAsc(KbDocument::getCreatedAt)
+
+        );
+
+        if (pendingDocuments == null || pendingDocuments.isEmpty()) {
+            log.info("[KB][INDEX] 没有待索引文档");
+            return;
+        }
+
+        log.info("[KB][INDEX] 查询到待索引文档数量={}", pendingDocuments.size());
+
+        for (KbDocument document : pendingDocuments) {
+            try {
+                indexDocument(document.getId());
+            } catch (Exception e) {
+                log.error("[KB][INDEX] 文档索引失败，documentId={}", document.getId(), e);
+            }
+        }
+    }
+
+    /**
+     * 索引单个文档。
+     *
+     * <p>当前版本执行顺序：
+     * <ol>
+     *     <li>校验文档是否存在且可索引</li>
+     *     <li>查询该文档全部分块</li>
+     *     <li>确保 Elasticsearch 索引存在</li>
+     *     <li>逐块写入 Elasticsearch</li>
+     *     <li>更新文档索引状态与整体状态</li>
+     *     <li>记录索引阶段日志</li>
+     * </ol>
+     *
+     * <p>当前为文本索引首版实现，暂不要求真实向量写入。
+     *
+     * @param documentId 文档 ID
+     */
+    @Transactional
+    @Override
+    public void indexDocument(Long documentId) {
+        if (documentId == null || documentId <= 0) {
+            throw new BusinessException(ResultCode.INVALID_PARAMETER, "documentId 不能为空");
+        }
+
+        log.info("[KB][INDEX] 开始索引文档，documentId={}", documentId);
+
+        KbDocument document = kbDocumentRepository.selectById(documentId);
+        if (document == null || document.getDeleted() == 1) {
+            throw new BusinessException(ResultCode.DOCUMENT_NOT_FOUND, "文档不存在");
+        }
+
+        if (document.getEnabled() == null || document.getEnabled() != 1) {
+            throw new BusinessException(ResultCode.INVALID_PARAMETER, "文档已禁用，无法索引");
+        }
+
+        if (!KbProcessStatus.SUCCESS.name().equals(document.getParseStatus())) {
+            throw new BusinessException(ResultCode.INVALID_PARAMETER, "文档尚未完成解析，无法索引");
+        }
+
+        List<KbChunk> chunks = kbChunkRepository.selectList(
+                new LambdaQueryWrapper<KbChunk>()
+                        .eq(KbChunk::getDocumentId, documentId)
+                        .eq(KbChunk::getEnabled, 1)
+                        .orderByAsc(KbChunk::getChunkIndex)
+        );
+
+        if (chunks == null || chunks.isEmpty()) {
+            throw new BusinessException(ResultCode.INVALID_PARAMETER, "文档分块不存在，无法索引");
+        }
+
+        insertProcessLog(documentId, KbProcessStage.INDEX, KbProcessStatus.PROCESSING, "开始写入 Elasticsearch 索引");
+
+        try {
+            document.setIndexStatus(KbProcessStatus.PROCESSING.name());
+            document.setUpdatedAt(LocalDateTime.now());
+            kbDocumentRepository.updateById(document);
+
+            elasticsearchIndexService.ensureIndexExists();
+
+            for (KbChunk chunk : chunks) {
+                elasticsearchIndexService.indexChunk(document, chunk, null);
+            }
+            
+            document.setIndexStatus(KbProcessStatus.SUCCESS.name());
+            document.setStatus(KbDocumentStatus.SUCCESS.name());
+            document.setUpdatedAt(LocalDateTime.now());
+            kbDocumentRepository.updateById(document);
+
+            insertProcessLog(documentId, KbProcessStage.INDEX, KbProcessStatus.SUCCESS,
+                    "文档索引完成，chunkCount=" + chunks.size());
+
+            log.info("[KB][INDEX] 文档索引完成，documentId={}, chunkCount={}", documentId, chunks.size());
+
+        } catch (Exception e) {
+            
+            document.setIndexStatus(KbProcessStatus.FAILED.name());
+            document.setStatus(KbDocumentStatus.FAILED.name());
+            document.setUpdatedAt(LocalDateTime.now());
+            kbDocumentRepository.updateById(document);
+
+            insertProcessLog(documentId, KbProcessStage.INDEX, KbProcessStatus.FAILED,
+                    "文档索引失败：" + e.getMessage());
+            
+            log.error("[KB][INDEX] 文档索引失败，documentId={}", documentId, e);
+            throw e instanceof BusinessException ? (BusinessException) e
+                    : new BusinessException(ResultCode.SYSTEM_ERROR, "文档索引失败");
+        }
+    }
+    
+    /**
+     * 写入文档处理日志。
+     *
+     * @param documentId 文档 ID
+     * @param stage 处理阶段
+     * @param status 处理状态
+     * @param message 日志说明
+     */
+    private void insertProcessLog(Long documentId, 
+                                  KbProcessStage stage, 
+                                  KbProcessStatus status, 
+                                  String message) {
+
+        KbDocumentProcessLog processLog = KbDocumentProcessLog.builder()
+                .documentId(documentId)
+                .stage(stage.name())
+                .status(status.name())
+                .message(message)
+                .retryCount(0)
+                .startedAt(LocalDateTime.now())
+                .endedAt(LocalDateTime.now())
+                .createdAt(LocalDateTime.now())
+                .build();
+
+        kbDocumentProcessLogRepository.insert(processLog);
     }
 
     /**
