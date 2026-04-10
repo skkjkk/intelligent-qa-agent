@@ -2,6 +2,7 @@ package com.jujiu.agent.service.kb;
 
 import com.jujiu.agent.model.dto.request.QueryKnowledgeBaseRequest;
 import com.jujiu.agent.model.dto.response.KnowledgeQueryResponse;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 /**
  * RAG 问答服务接口。
@@ -30,4 +31,14 @@ public interface RagService {
      * @return 知识库问答响应结果
      */
     KnowledgeQueryResponse query(Long userId, QueryKnowledgeBaseRequest request);
+
+    /**
+     * 执行知识库问答（流式）。
+     *
+     * @param userId 当前用户 ID
+     * @param request 知识库问答请求
+     * @return 知识库问答响应结果
+     */
+    SseEmitter queryStream(Long userId, QueryKnowledgeBaseRequest request);
+
 }

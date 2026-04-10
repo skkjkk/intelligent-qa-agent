@@ -16,6 +16,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.util.List;
 
@@ -132,4 +133,12 @@ public class KnowledgeBaseController {
         documentService.indexPendingDocuments();
         return Result.success(null, "待处理文档索引任务执行成功");
     }
+
+    @PostMapping("/query/stream")
+    @Operation(summary = "知识库流式问答", description = "基于知识库文档进行流式检索问答")
+    public SseEmitter queryStream(@RequestBody @Valid QueryKnowledgeBaseRequest request) {
+        Long userId = getCurrentUserId();
+        return ragService.queryStream(userId, request);
+    }
+
 }

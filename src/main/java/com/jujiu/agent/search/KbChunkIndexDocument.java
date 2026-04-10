@@ -10,14 +10,14 @@ import java.time.LocalDateTime;
 import java.util.List;
 
 /**
- * 知识库分块索引文档对象。
+ * 知识库分块索引文档。
  *
- * <p>用于承接写入 Elasticsearch 的知识库分块数据。
- * 当前版本先服务文本检索，后续可扩展向量字段。
+ * <p>用于将文档分块、元数据和向量信息统一写入 Elasticsearch，
+ * 支撑后续向量检索、关键词检索和混合检索能力。
  *
  * @author 17644
  * @version 1.0.0
- * @since 2026/4/8
+ * @since 2026/4/10
  */
 @Data
 @Builder
@@ -56,6 +56,20 @@ public class KbChunkIndexDocument {
     @Schema(description = "分块正文内容")
     private String content;
 
+
+    /**
+     * 所属章节标题。
+     */
+    @Schema(description = "所属章节标题")
+    private String sectionTitle;
+
+
+    /**
+     * 标签列表。
+     */
+    @Schema(description = "标签列表")
+    private List<String> tags;
+
     /**
      * 文档所属用户 ID。
      */
@@ -74,6 +88,12 @@ public class KbChunkIndexDocument {
     @Schema(description = "是否启用", example = "true")
     private Boolean enabled;
 
+    /**
+     * 分块向量。
+     */
+    @Schema(description = "分块向量")
+    private List<Float> vector;
+    
     /**
      * 创建时间。
      */

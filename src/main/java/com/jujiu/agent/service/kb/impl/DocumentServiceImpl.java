@@ -20,6 +20,7 @@ import com.jujiu.agent.repository.KbDocumentProcessLogRepository;
 import com.jujiu.agent.repository.KbDocumentRepository;
 import com.jujiu.agent.service.kb.DocumentService;
 import com.jujiu.agent.service.kb.ElasticsearchIndexService;
+import com.jujiu.agent.service.kb.EmbeddingService;
 import com.jujiu.agent.storage.MinioFileService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -50,18 +51,21 @@ public class DocumentServiceImpl implements DocumentService {
     private final DocumentProcessProducer documentProcessProducer;
     private final KbChunkRepository kbChunkRepository;
     private final ElasticsearchIndexService elasticsearchIndexService;
+    private final EmbeddingService embeddingService;
     public DocumentServiceImpl(MinioFileService minioFileService, 
                                KbDocumentRepository kbDocumentRepository, 
                                KbDocumentProcessLogRepository kbDocumentProcessLogRepository, 
                                KbChunkRepository kbChunkRepository, 
                                ElasticsearchIndexService elasticsearchIndexService, 
-                               DocumentProcessProducer documentProcessProducer) {
+                               DocumentProcessProducer documentProcessProducer,
+                               EmbeddingService embeddingService) {
         this.minioFileService = minioFileService;
         this.kbDocumentRepository = kbDocumentRepository;
         this.kbChunkRepository = kbChunkRepository;
         this.kbDocumentProcessLogRepository = kbDocumentProcessLogRepository;
         this.elasticsearchIndexService = elasticsearchIndexService;
         this.documentProcessProducer = documentProcessProducer;
+        this.embeddingService = embeddingService;
     }
 
 
@@ -447,13 +451,11 @@ public class DocumentServiceImpl implements DocumentService {
      * <ol>
      *     <li>校验文档是否存在且可索引</li>
      *     <li>查询该文档全部分块</li>
-     *     <li>确保 Elasticsearch 索引存在</li>
+     *     <li>逐块调用 Embedding 服务生成向量</li>
      *     <li>逐块写入 Elasticsearch</li>
      *     <li>更新文档索引状态与整体状态</li>
-     *     <li>记录索引阶段日志</li>
+     *     <li>记录 EMBEDDING、INDEX 阶段日志</li>
      * </ol>
-     *
-     * <p>当前为文本索引首版实现，暂不要求真实向量写入。
      *
      * @param documentId 文档 ID
      */
@@ -479,6 +481,7 @@ public class DocumentServiceImpl implements DocumentService {
             throw new BusinessException(ResultCode.INVALID_PARAMETER, "文档尚未完成解析，无法索引");
         }
 
+        // 查询该文档所有分块
         List<KbChunk> chunks = kbChunkRepository.selectList(
                 new LambdaQueryWrapper<KbChunk>()
                         .eq(KbChunk::getDocumentId, documentId)
@@ -489,18 +492,35 @@ public class DocumentServiceImpl implements DocumentService {
         if (chunks == null || chunks.isEmpty()) {
             throw new BusinessException(ResultCode.INVALID_PARAMETER, "文档分块不存在，无法索引");
         }
-
-        insertProcessLog(documentId, KbProcessStage.INDEX, KbProcessStatus.PROCESSING, "开始写入 Elasticsearch 索引");
-
+        
+        document.setIndexStatus(KbProcessStatus.PROCESSING.name());
+        document.setUpdatedAt(LocalDateTime.now());
+        kbDocumentRepository.updateById(document);
+        
+        // 插入处理阶段日志
+        insertProcessLog(documentId, KbProcessStage.EMBEDDING, KbProcessStatus.PROCESSING,
+                "开始生成分块向量，chunkCount=" + chunks.size());
+        insertProcessLog(documentId,KbProcessStage.INDEX, KbProcessStatus.PROCESSING,
+                "开始写入 Elasticsearch 索引，chunkCount=" + chunks.size());
+        
         try {
-            document.setIndexStatus(KbProcessStatus.PROCESSING.name());
-            document.setUpdatedAt(LocalDateTime.now());
-            kbDocumentRepository.updateById(document);
-
             elasticsearchIndexService.ensureIndexExists();
 
+            int successCount = 0;
             for (KbChunk chunk : chunks) {
-                elasticsearchIndexService.indexChunk(document, chunk, null);
+                log.info("[KB][INDEX] 开始处理分块索引 - documentId={}, chunkId={}, chunkIndex={}",
+                        documentId, chunk.getId(), chunk.getChunkIndex());
+
+                float[] vector = embeddingService.embedDocument(chunk.getContent());
+
+                log.info("[KB][EMBEDDING] 分块向量生成成功 - documentId={}, chunkId={}, chunkIndex={}, dimension={}",
+                        documentId, chunk.getId(), chunk.getChunkIndex(), vector.length);
+
+                elasticsearchIndexService.indexChunk(document, chunk, vector);
+                
+                successCount++;
+                log.info("[KB][INDEX] 分块索引写入成功 - documentId={}, chunkId={}, chunkIndex={}, successCount={}",
+                        documentId, chunk.getId(), chunk.getChunkIndex(), successCount);
             }
             
             document.setIndexStatus(KbProcessStatus.SUCCESS.name());
@@ -508,10 +528,12 @@ public class DocumentServiceImpl implements DocumentService {
             document.setUpdatedAt(LocalDateTime.now());
             kbDocumentRepository.updateById(document);
 
+            insertProcessLog(documentId, KbProcessStage.EMBEDDING, KbProcessStatus.SUCCESS,
+                    "文档向量化完成，chunkCount=" + chunks.size());
             insertProcessLog(documentId, KbProcessStage.INDEX, KbProcessStatus.SUCCESS,
                     "文档索引完成，chunkCount=" + chunks.size());
-
-            log.info("[KB][INDEX] 文档索引完成，documentId={}, chunkCount={}", documentId, chunks.size());
+            
+            log.info("[KB][INDEX] 文档索引完成 - documentId={}, chunkCount={}", documentId, chunks.size());
 
         } catch (Exception e) {
             
@@ -520,10 +542,13 @@ public class DocumentServiceImpl implements DocumentService {
             document.setUpdatedAt(LocalDateTime.now());
             kbDocumentRepository.updateById(document);
 
+            insertProcessLog(documentId, KbProcessStage.EMBEDDING, KbProcessStatus.FAILED,
+                    "文档向量化或索引失败：" + e.getMessage());
             insertProcessLog(documentId, KbProcessStage.INDEX, KbProcessStatus.FAILED,
                     "文档索引失败：" + e.getMessage());
+
+            log.error("[KB][INDEX] 文档索引失败 - documentId={}", documentId, e);
             
-            log.error("[KB][INDEX] 文档索引失败，documentId={}", documentId, e);
             throw e instanceof BusinessException ? (BusinessException) e
                     : new BusinessException(ResultCode.SYSTEM_ERROR, "文档索引失败");
         }

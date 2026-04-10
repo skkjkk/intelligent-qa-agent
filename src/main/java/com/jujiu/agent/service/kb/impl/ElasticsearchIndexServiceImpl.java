@@ -14,7 +14,9 @@ import org.springframework.stereotype.Service;
 
 import java.io.IOException;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -62,17 +64,20 @@ public class ElasticsearchIndexServiceImpl implements ElasticsearchIndexService 
 
         log.info("[KB][ES] 确保索引存在 - indexName={}", indexName);
         try {
-            boolean exists = elasticsearchClient.indices()
+            boolean exists = elasticsearchClient
+                    .indices()
                     .exists(request -> request.index(indexName))
                     .value();
             
+            // 如果索引已存在，则返回
             if (exists) {
                 log.info("[KB][ES] 索引已存在，indexName={}", indexName);
                 return;
             }
 
+            // 索引不存在，则创建索引
+            log.info("[KB][ES] 索引不存在，创建索引，indexName={}", indexName);
             Map<String, Property> properties = buildIndexProperties();
-
             elasticsearchClient
                     .indices()
                     .create(request -> request
@@ -84,7 +89,6 @@ public class ElasticsearchIndexServiceImpl implements ElasticsearchIndexService 
             log.info("[KB][ES] 索引创建成功，indexName={}", indexName);
             
         } catch (IOException e) {
-            
             log.error("[KB][ES] 创建索引失败，indexName={}", indexName, e);
             throw new BusinessException(ResultCode.SYSTEM_ERROR, "创建 Elasticsearch 索引失败" + e.getMessage());
         }
@@ -99,8 +103,8 @@ public class ElasticsearchIndexServiceImpl implements ElasticsearchIndexService 
      */
     @Override
     public void indexChunk(KbDocument document, KbChunk chunk, float[] vector) {
-        validateIndexChunk(document, chunk);
-
+        validateIndexChunk(document, chunk, vector);
+        
         ensureIndexExists();
         String indexName = getIndexName();
         String documentId = buildEsDocumentId(chunk.getId());
@@ -111,26 +115,49 @@ public class ElasticsearchIndexServiceImpl implements ElasticsearchIndexService 
                 .kbId(document.getKbId())
                 .title(document.getTitle())
                 .content(chunk.getContent())
+                .sectionTitle(chunk.getSectionTitle())
+                .tags(List.of())
                 .ownerUserId(document.getOwnerUserId())
                 .visibility(document.getVisibility())
                 .enabled(chunk.getEnabled() != null && chunk.getEnabled() == 1)
+                .vector(convertVector(vector))
                 .createdAt((chunk.getCreatedAt() != null ? chunk.getCreatedAt() : LocalDateTime.now()).toString())
                 .build();
 
         try {
-           elasticsearchClient.index(request -> request
-                   .index(indexName)
-                   .id(documentId)
-                   .document(indexDocument)
-           );
-            log.info("[KB][ES] 分块索引写入成功，indexName={}, chunkId={}, documentId={}",
-                    indexName, chunk.getId(), document.getId());
+            elasticsearchClient
+                    .index(request -> request
+                            .index(indexName)
+                            .id(documentId)
+                            .document(indexDocument)
+                    );
+
+            log.info("[KB][ES] 分块索引写入成功 - indexName={}, chunkId={}, documentId={}, vectorDimension={}",
+                    indexName, chunk.getId(), document.getId(), vector.length);
         } catch (IOException e) {
-            log.error("[KB][ES] 分块索引写入失败，indexName={}, chunkId={}, documentId={}",
+            log.error("[KB][ES] 分块索引写入失败 - indexName={}, chunkId={}, documentId={}",
                     indexName, chunk.getId(), document.getId(), e);
-            throw new BusinessException(ResultCode.SYSTEM_ERROR, "写入 Elasticsearch 分块索引失败");
+            throw new BusinessException(ResultCode.SYSTEM_ERROR, "写入 Elasticsearch 分块索引失败: " + e.getMessage());
         }
-            }
+    }
+
+    /**
+     * 将基础类型数组转换为 Elasticsearch 可序列化的向量列表。
+     *
+     * @param vector 原始向量数组
+     * @return 向量列表
+     */
+    private List<Float> convertVector(float[] vector) {
+        List<Float> result = new ArrayList<>();
+        if (vector == null) {
+            return result;
+        }
+        
+        for (float value : vector) {
+            result.add(value);
+        }
+        return result;
+    }
 
     /**
      * 按文档 ID 删除索引。
@@ -174,12 +201,28 @@ public class ElasticsearchIndexServiceImpl implements ElasticsearchIndexService 
         properties.put("kbId", Property.of(p -> p.long_(l -> l)));
         properties.put("title", Property.of(p -> p.text(t -> t)));
         properties.put("content", Property.of(p -> p.text(t -> t)));
+        properties.put("sectionTitle", Property.of(p -> p.text(t -> t)));
+        properties.put("tags", Property.of(p -> p.keyword(k -> k)));
         properties.put("ownerUserId", Property.of(p -> p.long_(l -> l)));
         properties.put("visibility", Property.of(p -> p.keyword(k -> k)));
         properties.put("enabled", Property.of(p -> p.boolean_(b -> b)));
+        properties.put("vector", Property.of(p -> p.denseVector(v -> v
+                .dims(getVectorDimension())
+                .index(true)
+                .similarity("cosine"))));
         properties.put("createdAt", Property.of(p -> p.date(d -> d)));
         
         return properties;
+    }
+
+    /**
+     * 获取向量维度配置。
+     *
+     * @return 向量维度
+     */
+    private Integer getVectorDimension() {
+        Integer dimension = knowledgeBaseProperties.getEmbedding().getDimension();
+        return (dimension == null || dimension <= 0) ? 2048 : dimension;
     }
 
     /**
@@ -189,13 +232,17 @@ public class ElasticsearchIndexServiceImpl implements ElasticsearchIndexService 
      * @param chunk 分块信息
      * @param vector 分块向量
      */
-    private void validateIndexChunk(KbDocument document, KbChunk chunk) {
+    private void validateIndexChunk(KbDocument document, KbChunk chunk, float[] vector) {
         if (document == null) {
             throw new BusinessException(ResultCode.INVALID_PARAMETER, "document 不能为空");
         }
 
         if (chunk == null) {
             throw new BusinessException(ResultCode.INVALID_PARAMETER, "chunk 不能为空");
+        }
+
+        if (vector == null || vector.length == 0) {
+            throw new BusinessException(ResultCode.INVALID_PARAMETER, "vector 不能为空");
         }
         
         if (document.getId() == null) {
@@ -208,6 +255,12 @@ public class ElasticsearchIndexServiceImpl implements ElasticsearchIndexService 
         
         if (chunk.getContent() == null || chunk.getContent().isBlank()) {
             throw new BusinessException(ResultCode.INVALID_PARAMETER, "chunk content 不能为空");
+        }
+
+        Integer expectedDimension = getVectorDimension();
+        if (vector.length != expectedDimension) {
+            log.warn("[KB][ES] 向量维度与配置不一致 - chunkId={}, expectedDimension={}, actualDimension={}",
+                    chunk.getId(), expectedDimension, vector.length);
         }
     }
     

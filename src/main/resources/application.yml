@@ -31,7 +31,7 @@ knowledge-base:
     
   # Elasticsearch
   elasticsearch:
-    index-name: kb_chunks_v1
+    index-name: kb_chunks_v2
     top-k: 5
     enable-hybrid: true
     

@@ -58,7 +58,7 @@ public class KnowledgeBaseProperties {
         /**
          * 索引名称
          */
-        private String indexName = "kb_chunks_v1";
+        private String indexName = "kb_chunks_v2";
         /**
          * 默认检索 TopK
          */

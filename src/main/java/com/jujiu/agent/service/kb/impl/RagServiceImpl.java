@@ -7,6 +7,7 @@ import com.jujiu.agent.client.DeepSeekResult;
 import com.jujiu.agent.common.exception.BusinessException;
 import com.jujiu.agent.common.result.ChunkSearchResult;
 import com.jujiu.agent.common.result.ResultCode;
+import com.jujiu.agent.config.KnowledgeBaseProperties;
 import com.jujiu.agent.model.dto.deepseek.DeepSeekMessage;
 import com.jujiu.agent.model.dto.request.QueryKnowledgeBaseRequest;
 import com.jujiu.agent.model.dto.response.CitationResponse;
@@ -22,11 +23,15 @@ import jakarta.validation.constraints.Size;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
+import java.io.IOException;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
 
 /**
  * RAG 问答服务实现。
@@ -56,24 +61,30 @@ public class RagServiceImpl implements RagService {
     private static final String DEFAULT_QUERY_STATUS_SUCCESS = "SUCCESS";
     private static final String DEFAULT_QUERY_STATUS_EMPTY = "EMPTY";
     private static final String DEFAULT_QUERY_STATUS_FAILED = "FAILED";
-    
+    private static final int STREAM_FLUSH_MIN_LENGTH = 32;
 
     private final VectorSearchService vectorSearchService;
     private final DeepSeekClient deepSeekClient;
     private final KbQueryLogRepository kbQueryLogRepository;
     private final KbRetrievalTraceRepository kbRetrievalTraceRepository;
+    private final KnowledgeBaseProperties  knowledgeBaseProperties;
+    private final ExecutorService chatExecutor;
     public final ObjectMapper objectMapper;
     
     public RagServiceImpl(VectorSearchService vectorSearchService,
                           DeepSeekClient deepSeekClient,
                           KbQueryLogRepository kbQueryLogRepository,
                           KbRetrievalTraceRepository kbRetrievalTraceRepository,
-                          ObjectMapper objectMapper) {
+                          KnowledgeBaseProperties knowledgeBaseProperties,
+                          ObjectMapper objectMapper,
+                          ExecutorService chatExecutor) {
         this.vectorSearchService = vectorSearchService;
         this.deepSeekClient = deepSeekClient;
         this.kbQueryLogRepository = kbQueryLogRepository;
         this.kbRetrievalTraceRepository = kbRetrievalTraceRepository;
+        this.knowledgeBaseProperties = knowledgeBaseProperties;
         this.objectMapper = objectMapper;
+        this.chatExecutor = chatExecutor;
     }
 
     /**
@@ -113,6 +124,10 @@ public class RagServiceImpl implements RagService {
         String context = buildContext(searchResults);
         // 构造提示
         List<DeepSeekMessage> messages = buildPromptMessages(request.getQuestion(), context);
+
+        log.info("[KB][QUERY] 检索结果已完成组装，开始调用模型生成答案 - kbId={}, userId={}, citationCount={}",
+                kbId, userId, citations.size());
+        
         // 调用 DeepSeek
         DeepSeekResult deepSeekResult = deepSeekClient.chat(messages);
 
@@ -147,6 +162,159 @@ public class RagServiceImpl implements RagService {
                 .latencyMs(latencyMs)
                 .build();
     }
+
+    /**
+     * 执行知识库流式问答。
+     *
+     * <p>当前实现先同步完成检索、引用与 Prompt 组装，
+     * 再调用 DeepSeek 流式接口逐段返回模型生成内容。
+     *
+     * @param userId 当前用户 ID
+     * @param request 知识库问答请求
+     * @return SSE 发射器
+     */
+    @Override
+    public SseEmitter queryStream(Long userId, QueryKnowledgeBaseRequest request) {
+        validateRequest(userId, request);
+        
+        SseEmitter emitter = new SseEmitter(0L);
+
+        chatExecutor.submit(()-> {
+
+            long startTime = System.currentTimeMillis();
+            Long kbId = request.getKbId() == null ? 1L : request.getKbId();
+            Integer topK = request.getTopK() == null ? 5 : request.getTopK();
+
+            try {
+                log.info("[KB][QUERY][STREAM] 开始执行知识库流式问答 - kbId={}, userId={}, topK={}, questionLength={}",
+                        kbId, userId, topK, request.getQuestion().length());
+
+                List<ChunkSearchResult> searchResults = vectorSearchService.search(
+                        kbId,
+                        userId,
+                        request.getQuestion(),
+                        topK
+                );
+
+                if (searchResults == null || searchResults.isEmpty()) {
+                    log.info("[KB][QUERY][STREAM] 未检索到可用结果 - kbId={}, userId={}", kbId, userId);
+
+                    emitter.send(SseEmitter.event()
+                            .name("message")
+                            .data("抱歉，知识库中没有足够信息支持回答该问题。"));
+
+                    emitter.send(SseEmitter.event()
+                            .name("done")
+                            .data("STREAM_FINISHED"));
+                    emitter.complete();
+                    return;
+                }
+
+                List<CitationResponse> citations = buildCitation(searchResults);
+                String context = buildContext(searchResults);
+                List<DeepSeekMessage> messages = buildPromptMessages(request.getQuestion(), context);
+
+                log.info("[KB][QUERY][STREAM] 检索结果已完成组装，开始流式调用模型 - kbId={}, userId={}, citationCount={}",
+                        kbId, userId, citations.size());
+
+                StringBuilder answerBuilder = new StringBuilder();
+                StringBuilder chunkBuffer = new StringBuilder();
+                int pushCount = 0;
+                
+                for(String content : deepSeekClient.chatStream(messages).toIterable()) {
+                    if (content == null || content.isEmpty()) {
+                        return;
+                    }
+
+                    answerBuilder.append(content);
+                    chunkBuffer.append(content);
+
+                    if (shouldFlushStreamChunk(chunkBuffer)) {
+                        String output = chunkBuffer.toString();
+                        pushCount++;
+
+                        log.info("[KB][QUERY][STREAM] 推送流式片段 - kbId={}, userId={}, pushCount={}, chunkLength={}, totalLength={}",
+                                kbId, userId, pushCount, output.length(), answerBuilder.length());
+
+                        emitter.send(SseEmitter.event()
+                                .name("message")
+                                .data(output));
+
+                        chunkBuffer.setLength(0);
+                    }
+                }
+                if (!chunkBuffer.isEmpty()) {
+                    String output = chunkBuffer.toString();
+                    pushCount++;
+
+                    log.info("[KB][QUERY][STREAM] 推送最后流式片段 - kbId={}, userId={}, pushCount={}, chunkLength={}, totalLength={}",
+                            kbId, userId, pushCount, output.length(), answerBuilder.length());
+
+                    emitter.send(SseEmitter.event()
+                            .name("message")
+                            .data(output));
+                }
+
+                emitter.send(SseEmitter.event()
+                        .name("done")
+                        .data("STREAM_FINISHED"));
+
+                emitter.complete();
+
+                long latencyMs = System.currentTimeMillis() - startTime;
+                log.info("[KB][QUERY][STREAM] 知识库流式问答完成 - kbId={}, userId={}, answerLength={}, latencyMs={}",
+                        kbId, userId, answerBuilder.length(), latencyMs);
+                
+            } catch (Exception e) {
+                long latencyMs = System.currentTimeMillis() - startTime;
+                log.error("[KB][QUERY][STREAM] 知识库流式问答失败 - kbId={}, userId={}, latencyMs={}",
+                        kbId, userId, latencyMs, e);
+                
+                try {
+                    emitter.send(SseEmitter.event()
+                            .name("error")
+                            .data("知识库流式问答失败：" + e.getMessage())
+                    );
+                } catch (Exception sendException) {
+                    log.warn("[KB][QUERY][STREAM] 推送错误事件失败 - kbId={}, userId={}", kbId, userId, sendException);
+                }
+                
+                emitter.completeWithError(e);
+            }
+        });
+        return emitter;
+    }
+
+    /**
+     * 判断当前流式缓冲内容是否应当立即输出。
+     *
+     * <p>当前策略：
+     * <ul>
+     *     <li>缓冲长度达到最小阈值时输出</li>
+     *     <li>遇到换行或常见中文句读时提前输出</li>
+     * </ul>
+     *
+     * @param buffer 当前缓冲内容
+     * @return true 表示应立即输出
+     */
+    private boolean shouldFlushStreamChunk(StringBuilder buffer) {
+        if (buffer == null || buffer.length() == 0) {
+            return false;
+        }
+
+        if (buffer.length() >= STREAM_FLUSH_MIN_LENGTH) {
+            return true;
+        }
+
+        char lastChar = buffer.charAt(buffer.length() - 1);
+        return lastChar == '\n'
+                || lastChar == '。'
+                || lastChar == '！'
+                || lastChar == '？'
+                || lastChar == '；'
+                || lastChar == '：';
+    }
+
     /**
      * 保存检索轨迹。
      *
@@ -232,37 +400,79 @@ public class RagServiceImpl implements RagService {
             return "[]";
         }
     }
-    
+
+    /**
+     * 构造知识库问答消息列表。
+     *
+     * @param question 用户问题
+     * @param context 检索上下文
+     * @return DeepSeek 消息列表
+     */
     private List<DeepSeekMessage> buildPromptMessages(@NotBlank(message = "问题不能为空") 
                                                       @Size(max = 2000, message = "问题长度不能超过2000字符") 
                                                       String question, 
                                                       String context) {
-        String prompt = """
-                你是一个知识库问答助手。请严格基于参考资料回答问题。
-                如果参考资料不足，请明确说“知识库中没有足够信息支持回答该问题”。
-                
-                【参考资料】
-                %s
-                
-                【问题】
-                %s
-                
-                【回答要求】
-                1. 仅基于参考资料回答
-                2. 使用中文
-                3. 不要编造内容
-                4. 如果引用资料，可标注[1][2]
-                """.formatted(context, question);
+        String prompt = buildPrompt(question, context);
         DeepSeekMessage userMessage = new DeepSeekMessage();
         userMessage.setRole(DeepSeekMessage.MessageRole.USER);
         userMessage.setContent(prompt);
         return List.of(userMessage);
     }
-    
+
+    /**
+     * 构造知识库问答 Prompt。
+     *
+     * <p>优先读取配置文件中的 Prompt 模板，并替换上下文与问题占位符。
+     * 当配置缺失时，回退到默认模板。
+     *
+     * @param question 用户问题
+     * @param context 检索上下文
+     * @return 最终 Prompt
+     */
+    private String buildPrompt(String question, String context) {
+        String template = getPromptTemplate();
+        String prompt = template
+                .replace("{{context}}", context == null ? "" : context)
+                .replace("{{question}}", question == null ? "" : question);
+
+        log.info("[KB][QUERY] Prompt 构造完成 - questionLength={}, contextLength={}, promptLength={}",
+                question == null ? 0 : question.length(),
+                context == null ? 0 : context.length(),
+                prompt.length());
+        return prompt;
+    }
+
+    private String getPromptTemplate() {
+        if (knowledgeBaseProperties != null 
+                && knowledgeBaseProperties.getRag() != null 
+                && knowledgeBaseProperties.getRag().getPromptTemplate() != null
+                && !knowledgeBaseProperties.getRag().getPromptTemplate().isBlank()){
+            return knowledgeBaseProperties.getRag().getPromptTemplate();
+        }
+        
+        return """
+            你是一个知识库问答助手。请严格基于参考资料回答问题。
+            如果参考资料不足，请明确说“知识库中没有足够信息支持回答该问题”。
+
+            【参考资料】
+            {{context}}
+
+            【问题】
+            {{question}}
+
+            【回答要求】
+            1. 仅基于参考资料回答
+            2. 使用中文
+            3. 不要编造内容
+            4. 如果引用资料，可标注[1][2]
+            """;
+    }
+
     /**
      * 构造知识库上下文。
      *
-     * <p>当前采用最简单的编号拼接方式，便于模型引用和前端溯源。
+     * <p>当前采用编号拼接方式组织上下文，
+     * 便于模型引用与前端溯源。
      *
      * @param searchResults 检索结果
      * @return 上下文文本
@@ -277,7 +487,12 @@ public class RagServiceImpl implements RagService {
                     .append(searchResult.getContent())
                     .append("\n\n");
         }
-        return builder.toString();
+        String context = builder.toString();
+        
+        log.info("[KB][QUERY] 上下文构造完成 - resultCount={}, contextLength={}",
+                searchResults == null ? 0 : searchResults.size(), context.length());
+
+        return context;
     }
 
     /**
@@ -340,6 +555,9 @@ public class RagServiceImpl implements RagService {
                             .build()
             );
         }
+        
+        log.info("[KB][QUERY] 引用构造完成 - citationCount={}", citations.size());
+
         return citations;
     }
     private void validateRequest(Long userId, QueryKnowledgeBaseRequest request) {
