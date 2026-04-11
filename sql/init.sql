@@ -156,7 +156,7 @@ CREATE TABLE `kb_document` (
                                `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
                                `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
   COMMENT '更新时间',
-                               UNIQUE KEY `uk_kb_document_hash` (`kb_id`, `content_hash`),
+                               UNIQUE KEY `uk_kb_document_hash` (`kb_id`, `owner_user_id`, `content_hash`),
                                KEY `idx_kb_document_owner` (`owner_user_id`),
                                KEY `idx_kb_document_status` (`status`),
                                KEY `idx_kb_document_created_at` (`created_at`),

@@ -61,4 +61,5 @@ public interface ChatService {
      * @return SseEmitter 用于向客户端推送流式数据
      */
     SseEmitter sendMessageStream(Long userId, SendMessageRequest request);
+    
 }

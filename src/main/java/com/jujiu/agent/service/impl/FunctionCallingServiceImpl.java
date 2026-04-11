@@ -14,6 +14,7 @@ import com.jujiu.agent.model.entity.Tool;
 import com.jujiu.agent.service.FunctionCallingService;
 
 import com.jujiu.agent.tool.AbstractTool;
+import com.jujiu.agent.tool.ToolExecutionContext;
 import com.jujiu.agent.tool.ToolRegistry;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -37,66 +38,73 @@ import java.util.function.Consumer;
 @Service
 @Slf4j
 public class FunctionCallingServiceImpl implements FunctionCallingService {
-    
-    @Autowired
-    private ToolRegistry toolRegistry;
-    
-    @Autowired
-    private DeepSeekClient deepSeekClient;
+    private static final int STREAM_MESSAGE_FLUSH_MIN_LENGTH = 32;
 
-    @Autowired
-    private ObjectMapper objectMapper;
-    
+    private final ToolRegistry toolRegistry;
+    private final DeepSeekClient deepSeekClient;
+    private final ObjectMapper objectMapper;
+
+    public FunctionCallingServiceImpl(ToolRegistry toolRegistry, DeepSeekClient deepSeekClient, ObjectMapper objectMapper) {
+        this.toolRegistry = toolRegistry;
+        this.deepSeekClient = deepSeekClient;
+        this.objectMapper = objectMapper;
+    }
+
     @Override
-    public DeepSeekResult chatWithTools(List<DeepSeekMessage> messages) {
-        log.info("[FUNCTION_CALLING] 开始带工具的对话 - messageCount={}", messages.size());
-        
-        // 1. 获取所有可用的工具定义
-        List<ToolDefinition> toolDefinitions = getToolDefinitions();
-        log.info("[FUNCTION_CALLING] 获取到工具数量 - count={}", toolDefinitions.size());
-        
-        // 2. 如果没有工具，直接调用普通对话
-        if (toolDefinitions.isEmpty()) {
-            log.warn("[FUNCTION_CALLING] 没有可用的工具，将进行普通对话");
-            return deepSeekClient.chat(messages);
-        }
-        
-        // 3. 循环调用，最多5次
-        int iterations = 0;
-        while (iterations < BusinessConstants.FUNCTION_CALLING_MAX_ITERATIONS) {
-            iterations++;
-            log.info("[FUNCTION_CALLING] 当前迭代次数 - iteration={}", iterations);
-            
-            // 4. 调用DeepSeek API
-            DeepSeekResult result = deepSeekClient.chatWithTools(messages, toolDefinitions);
-            
-            // 5. 检查是否有工具调用
-            List<ToolCallDTO> toolCalls = result.getToolCalls();
-            if (toolCalls == null || toolCalls.isEmpty()) {
-                log.info("[FUNCTION_CALLING] AI不需要调用工具，返回最终结果");
-                return result;
-            }
-            
-            // 6. 将 assistant 的消息（包含 tool_calls）加入对话历史
-            DeepSeekMessage assistantMessage = new DeepSeekMessage();
-            assistantMessage.setRole(DeepSeekMessage.MessageRole.ASSISTANT);
-            // 如果内容为空字符串，设置为 null（DeepSeek API 要求）
-            String content = result.getReply();
-            assistantMessage.setContent(content != null && !content.isEmpty() ? content : null);
-            assistantMessage.setToolCalls(toolCalls);
-            messages.add(assistantMessage);
+    public DeepSeekResult chatWithTools(Long userId,List<DeepSeekMessage> messages) {
+        ToolExecutionContext.setCurrentUserId(userId);
+        try {
+            log.info("[FUNCTION_CALLING] 开始带工具的对话 - messageCount={}", messages.size());
 
-            // 7. 执行所有工具调用
-            log.info("[FUNCTION_CALLING] AI需要调用{}个工具", result.getToolCalls().size());
-            for (ToolCallDTO toolCall : result.getToolCalls()) {
-                String toolResult = executeTool(toolCall);
-                // 8. 将工具结果作为新消息加入对话
-                messages.add(DeepSeekMessage.toolMessage(toolCall.getId(), toolResult));
+            // 1. 获取所有可用的工具定义
+            List<ToolDefinition> toolDefinitions = getToolDefinitions();
+            log.info("[FUNCTION_CALLING] 获取到工具数量 - count={}", toolDefinitions.size());
+
+            // 2. 如果没有工具，直接调用普通对话
+            if (toolDefinitions.isEmpty()) {
+                log.warn("[FUNCTION_CALLING] 没有可用的工具，将进行普通对话");
+                return deepSeekClient.chat(messages);
             }
+
+            // 3. 循环调用，最多5次
+            int iterations = 0;
+            while (iterations < BusinessConstants.FUNCTION_CALLING_MAX_ITERATIONS) {
+                iterations++;
+                log.info("[FUNCTION_CALLING] 当前迭代次数 - iteration={}", iterations);
+                
+                // 4. 调用DeepSeek API
+                DeepSeekResult result = deepSeekClient.chatWithTools(messages, toolDefinitions);
+                
+                // 5. 检查是否有工具调用
+                List<ToolCallDTO> toolCalls = result.getToolCalls();
+                if (toolCalls == null || toolCalls.isEmpty()) {
+                    log.info("[FUNCTION_CALLING] AI不需要调用工具，返回最终结果");
+                    return result;
+                }
+                
+                // 6. 将 assistant 的消息（包含 tool_calls）加入对话历史
+                DeepSeekMessage assistantMessage = new DeepSeekMessage();
+                assistantMessage.setRole(DeepSeekMessage.MessageRole.ASSISTANT);
+                // 如果内容为空字符串，设置为 null（DeepSeek API 要求）
+                String content = result.getReply();
+                assistantMessage.setContent(content != null && !content.isEmpty() ? content : null);
+                assistantMessage.setToolCalls(toolCalls);
+                messages.add(assistantMessage);
+    
+                // 7. 执行所有工具调用
+                log.info("[FUNCTION_CALLING] AI需要调用{}个工具", result.getToolCalls().size());
+                for (ToolCallDTO toolCall : result.getToolCalls()) {
+                    String toolResult = executeTool(toolCall);
+                    // 8. 将工具结果作为新消息加入对话
+                    messages.add(DeepSeekMessage.toolMessage(toolCall.getId(), toolResult));
+                }
+            }
+            // 8. 超过最大次数，抛出异常
+            log.error("[FUNCTION_CALLING] 工具调用超过最大次数 - maxIterations={}", BusinessConstants.FUNCTION_CALLING_MAX_ITERATIONS);
+            throw new BusinessException(ResultCode.FUNCTION_CALLING_MAX_ITERATIONS);
+        } finally {
+            ToolExecutionContext.clear();
         }
-        // 8. 超过最大次数，抛出异常
-        log.error("[FUNCTION_CALLING] 工具调用超过最大次数 - maxIterations={}", BusinessConstants.FUNCTION_CALLING_MAX_ITERATIONS);
-        throw new BusinessException(ResultCode.FUNCTION_CALLING_MAX_ITERATIONS);
     }
 
     /**
@@ -223,158 +231,218 @@ public class FunctionCallingServiceImpl implements FunctionCallingService {
      */
     @Override
     public StreamingChatResult streamChatWithTools(
+            Long userId,
             List<DeepSeekMessage> messages,
             Consumer<StreamEvent> eventConsumer) {
         
-        log.info("[FUNCTION_CALLING][STREAM] 开始带工具的流式对话 - messageCount={}", messages.size());
-        // 存储需要保存到数据库的消息（包括带 tool_calls 的 assistant 消息和 tool 消息）
-        List<DeepSeekMessage> messagesToSave = new ArrayList<>();
-        // 获取所有可用的工具定义
-        List<ToolDefinition> toolDefinitions = getToolDefinitions();
-        
-        if (toolDefinitions.isEmpty()) {
-            log.warn("[FUNCTION_CALLING][STREAM] 没有可用工具，无法进行流式工具对话");
-            throw new BusinessException(ResultCode.INTERNAL_ERROR);
-        }
-
-        // 初始化 Token 统计变量
-        int totalPromptTokens = 0;
-        int totalCompletionTokens = 0;
-        int totalTokens = 0;
-
-        // 开始迭代处理工具调用
-        int iterations = 0;
-        while (iterations < BusinessConstants.FUNCTION_CALLING_MAX_ITERATIONS) {
-            iterations++;
-            log.info("[FUNCTION_CALLING][STREAM] 当前迭代次数 - iteration={}", iterations);
-
-            // 创建当前轮次的累积器，用于收集流式响应的各个部分
-            StreamingRoundAccumulator accumulator = new StreamingRoundAccumulator();
+        ToolExecutionContext.setCurrentUserId(userId);
+        try {
+            log.info("[FUNCTION_CALLING][STREAM] 开始带工具的流式对话 - messageCount={}", messages.size());
             
-            // 获取 DeepSeek API 的流式响应
-            Flux<DeepSeekClient.ToolStreamChunk> stream = deepSeekClient.chatStreamWithTools(messages, toolDefinitions);
+            // 存储需要保存到数据库的消息（包括带 tool_calls 的 assistant 消息和 tool 消息）
+            List<DeepSeekMessage> messagesToSave = new ArrayList<>();
+            // 获取所有可用的工具定义
+            List<ToolDefinition> toolDefinitions = getToolDefinitions();
 
-            try {
-                // 遍历流式响应的每个 chunk
-                for (DeepSeekClient.ToolStreamChunk chunk : stream.toIterable()) {
-                    // 跳过空 chunk
-                    if (chunk == null) {
-                        continue;
-                    }
+            if (toolDefinitions.isEmpty()) {
+                log.warn("[FUNCTION_CALLING][STREAM] 没有可用工具，无法进行流式工具对话");
+                throw new BusinessException(ResultCode.INTERNAL_ERROR);
+            }
 
-                    // 处理结束 chunk，提取 finishReason 和 usage 信息
-                    if (chunk.isEnd()) {
+            // 初始化 Token 统计变量
+            int totalPromptTokens = 0;
+            int totalCompletionTokens = 0;
+            int totalTokens = 0;
+
+            // 开始迭代处理工具调用
+            int iterations = 0;
+            while (iterations < BusinessConstants.FUNCTION_CALLING_MAX_ITERATIONS) {
+                iterations++;
+                log.info("[FUNCTION_CALLING][STREAM] 当前迭代次数 - iteration={}", iterations);
+    
+                // 创建当前轮次的累积器，用于收集流式响应的各个部分
+                StreamingRoundAccumulator accumulator = new StreamingRoundAccumulator();
+                
+                // 获取 DeepSeek API 的流式响应
+                Flux<DeepSeekClient.ToolStreamChunk> stream = deepSeekClient.chatStreamWithTools(messages, toolDefinitions);
+    
+                try {
+                    // 遍历流式响应的每个 chunk
+                    for (DeepSeekClient.ToolStreamChunk chunk : stream.toIterable()) {
+                        // 跳过空 chunk
+                        if (chunk == null) {
+                            continue;
+                        }
+    
+                        // 处理结束 chunk，提取 finishReason 和 usage 信息
+                        if (chunk.isEnd()) {
+                            if (chunk.getFinishReason() != null) {
+                                accumulator.setFinishReason(chunk.getFinishReason());
+                            }
+                            if (chunk.getUsage() != null) {
+                                accumulator.setUsage(chunk.getUsage());
+                            }
+                            continue;
+                        }
+    
+                        // 处理内容 chunk，推送到前端
+                        if (chunk.getContent() != null) {
+                            accumulator.appendContent(chunk.getContent());
+                            accumulator.appendStreamChunk(chunk.getContent());
+                            if (shouldFlushStreamMessage(accumulator.streamChunkBuffer)) {
+                                String output = accumulator.getStreamChunkBuffer();
+
+                                log.info("[FUNCTION_CALLING][STREAM] 推送消息片段 - iteration={}, chunkLength={}, accumulatedLength={}",
+                                        iterations, output.length(), accumulator.getContent().length());
+
+                                eventConsumer.accept(StreamEvent.message(output));
+                                accumulator.clearStreamChunkBuffer();
+                            }
+                        }
+    
+                        // 处理工具调用 chunk
+                        if (chunk.getToolCalls() != null && !chunk.getToolCalls().isEmpty()) {
+                            accumulator.appendToolCalls(chunk.getToolCalls());
+                        }
+    
+                        // 处理结束原因
                         if (chunk.getFinishReason() != null) {
                             accumulator.setFinishReason(chunk.getFinishReason());
                         }
-                        if (chunk.getUsage() != null) {
-                            accumulator.setUsage(chunk.getUsage());
-                        }
-                        continue;
                     }
 
-                    // 处理内容 chunk，推送到前端
-                    if (chunk.getContent() != null) {
-                        accumulator.appendContent(chunk.getContent());
-                        eventConsumer.accept(StreamEvent.message(chunk.getContent()));
+                    // 在每轮结束前把剩余 buffer 冲掉
+                    if (!accumulator.getStreamChunkBuffer().isEmpty()) {
+                        String output = accumulator.getStreamChunkBuffer();
+
+                        log.info("[FUNCTION_CALLING][STREAM] 推送最后消息片段 - iteration={}, chunkLength={}, accumulatedLength={}",
+                                iterations, output.length(), accumulator.getContent().length());
+
+                        eventConsumer.accept(StreamEvent.message(output));
+                        accumulator.clearStreamChunkBuffer();
                     }
 
-                    // 处理工具调用 chunk
-                    if (chunk.getToolCalls() != null && !chunk.getToolCalls().isEmpty()) {
-                        accumulator.appendToolCalls(chunk.getToolCalls());
-                    }
-
-                    // 处理结束原因
-                    if (chunk.getFinishReason() != null) {
-                        accumulator.setFinishReason(chunk.getFinishReason());
-                    }
-                }
-            } catch (Exception e) {
-                log.error("[FUNCTION_CALLING][STREAM] 流式响应处理异常", e);
-                throw new BusinessException(ResultCode.DEEPSEEK_API_RETURN_NULL);
-            }
-
-            // 累加 Token 使用统计
-            if (accumulator.getUsage() != null) {
-                DeepSeekClient.StreamResponse.StreamUsage usage = accumulator.getUsage();
-                totalPromptTokens += usage.getPromptTokens() != null ? usage.getPromptTokens() : 0;
-                totalCompletionTokens += usage.getCompletionTokens() != null ? usage.getCompletionTokens() : 0;
-                totalTokens += usage.getTotalTokens() != null ? usage.getTotalTokens() : 0;
-            }
-
-            // 获取当前轮次的累积结果
-            String roundContent = accumulator.getContent();
-            
-            // 构建工具调用列表
-            List<ToolCallDTO> toolCalls = accumulator.buildToolCalls();
-
-            // 如果没有工具调用，说明 AI 已返回最终结果
-            if (toolCalls == null || toolCalls.isEmpty()) {
-                log.info("[FUNCTION_CALLING][STREAM] AI 不需要调用工具，返回最终结果");
-                DeepSeekMessage finalMessage = new DeepSeekMessage();
-                finalMessage.setRole(DeepSeekMessage.MessageRole.ASSISTANT);
-                finalMessage.setContent(roundContent);
-                messagesToSave.add(finalMessage);
-                return new StreamingChatResult(
-                        roundContent,
-                        totalPromptTokens,
-                        totalCompletionTokens,
-                        totalTokens,
-                        messagesToSave
-                );
-            }
-
-            log.info("[FUNCTION_CALLING][STREAM] AI 需要调用{}个工具", toolCalls.size());
-
-            // 将 AI 的回复（包含 tool_calls）添加到对话历史和待保存列表
-            DeepSeekMessage assistantMessage = new DeepSeekMessage();
-            assistantMessage.setRole(DeepSeekMessage.MessageRole.ASSISTANT);
-            // 如果内容为空字符串，设置为 null（DeepSeek API 要求）
-            assistantMessage.setContent(roundContent != null && !roundContent.isEmpty() ? roundContent : null);
-            assistantMessage.setToolCalls(toolCalls);
-            messages.add(assistantMessage);
-            // 记录带 tool_calls 的消息
-            messagesToSave.add(assistantMessage);
-            
-            // 遍历工具调用列表，执行每个工具并收集结果
-            for (ToolCallDTO toolCall : toolCalls) {
-                String toolName = toolCall.getFunction().getName();
-                eventConsumer.accept(StreamEvent.toolStart(toolName));
-                
-                String result;
-                boolean success;
-                String errorMsg = null;
-                try {
-                    result = executeTool(toolCall);
-                    success = true;
                 } catch (Exception e) {
-                    result = "错误：工具执行失败 - " + e.getMessage();
-                    success = false;
-                    errorMsg = e.getMessage();
-                    log.error("[FUNCTION_CALLING][STREAM] 工具执行异常 - name={}", toolName, e);
+                    log.error("[FUNCTION_CALLING][STREAM] 流式响应处理异常", e);
+                    throw new BusinessException(ResultCode.DEEPSEEK_API_RETURN_NULL);
                 }
+    
+                // 累加 Token 使用统计
+                if (accumulator.getUsage() != null) {
+                    DeepSeekClient.StreamResponse.StreamUsage usage = accumulator.getUsage();
+                    totalPromptTokens += usage.getPromptTokens() != null ? usage.getPromptTokens() : 0;
+                    totalCompletionTokens += usage.getCompletionTokens() != null ? usage.getCompletionTokens() : 0;
+                    totalTokens += usage.getTotalTokens() != null ? usage.getTotalTokens() : 0;
+                }
+    
+                // 获取当前轮次的累积结果
+                String roundContent = accumulator.getContent();
                 
-                eventConsumer.accept(StreamEvent.toolEnd(toolName, success, errorMsg));
-                // 创建工具响应消息
-                DeepSeekMessage toolMessage = DeepSeekMessage.toolMessage(toolCall.getId(), result);
-                messages.add(toolMessage);
-                // 记录 tool 消息到数据库
-                messagesToSave.add(toolMessage);
+                // 构建工具调用列表
+                List<ToolCallDTO> toolCalls = accumulator.buildToolCalls();
+    
+                // 如果没有工具调用，说明 AI 已返回最终结果
+                if (toolCalls == null || toolCalls.isEmpty()) {
+                    log.info("[FUNCTION_CALLING][STREAM] AI 不需要调用工具，返回最终结果");
+                    DeepSeekMessage finalMessage = new DeepSeekMessage();
+                    finalMessage.setRole(DeepSeekMessage.MessageRole.ASSISTANT);
+                    finalMessage.setContent(roundContent);
+                    messagesToSave.add(finalMessage);
+                    return new StreamingChatResult(
+                            roundContent,
+                            totalPromptTokens,
+                            totalCompletionTokens,
+                            totalTokens,
+                            messagesToSave
+                    );
+                }
+    
+                log.info("[FUNCTION_CALLING][STREAM] AI 需要调用{}个工具", toolCalls.size());
+    
+                // 将 AI 的回复（包含 tool_calls）添加到对话历史和待保存列表
+                DeepSeekMessage assistantMessage = new DeepSeekMessage();
+                assistantMessage.setRole(DeepSeekMessage.MessageRole.ASSISTANT);
+                // 如果内容为空字符串，设置为 null（DeepSeek API 要求）
+                assistantMessage.setContent(roundContent != null && !roundContent.isEmpty() ? roundContent : null);
+                assistantMessage.setToolCalls(toolCalls);
+                messages.add(assistantMessage);
+                // 记录带 tool_calls 的消息
+                messagesToSave.add(assistantMessage);
+                
+                // 遍历工具调用列表，执行每个工具并收集结果
+                for (ToolCallDTO toolCall : toolCalls) {
+                    String toolName = toolCall.getFunction().getName();
+                    eventConsumer.accept(StreamEvent.toolStart(toolName));
+                    
+                    String result;
+                    boolean success;
+                    String errorMsg = null;
+                    try {
+                        result = executeTool(toolCall);
+                        success = true;
+                    } catch (Exception e) {
+                        result = "错误：工具执行失败 - " + e.getMessage();
+                        success = false;
+                        errorMsg = e.getMessage();
+                        log.error("[FUNCTION_CALLING][STREAM] 工具执行异常 - name={}", toolName, e);
+                    }
+                    
+                    eventConsumer.accept(StreamEvent.toolEnd(toolName, success, errorMsg));
+                    // 创建工具响应消息
+                    DeepSeekMessage toolMessage = DeepSeekMessage.toolMessage(toolCall.getId(), result);
+                    messages.add(toolMessage);
+                    // 记录 tool 消息到数据库
+                    messagesToSave.add(toolMessage);
+                }
             }
-        }
 
-        // 超过最大迭代次数，抛出异常
-        log.error("[FUNCTION_CALLING][STREAM] 工具调用超过最大次数 - maxIterations={}", BusinessConstants.FUNCTION_CALLING_MAX_ITERATIONS);
-        throw new BusinessException(ResultCode.FUNCTION_CALLING_MAX_ITERATIONS);
+            // 超过最大迭代次数，抛出异常
+            log.error("[FUNCTION_CALLING][STREAM] 工具调用超过最大次数 - maxIterations={}", BusinessConstants.FUNCTION_CALLING_MAX_ITERATIONS);
+            throw new BusinessException(ResultCode.FUNCTION_CALLING_MAX_ITERATIONS);
+        } finally {
+            ToolExecutionContext.clear();
+        }
     }
 
+    /**
+     * 判断当前流式消息缓冲是否应立即输出。
+     *
+     * <p>当前策略：
+     * <ul>
+     *     <li>缓冲长度达到最小阈值时输出</li>
+     *     <li>遇到换行或常见中文句读时提前输出</li>
+     * </ul>
+     *
+     * @param buffer 当前缓冲内容
+     * @return true 表示应立即输出
+     */
+    private boolean shouldFlushStreamMessage(StringBuilder buffer) {
+        if (buffer == null || buffer.length() == 0) {
+            return false;
+        }
+
+        if (buffer.length() >= STREAM_MESSAGE_FLUSH_MIN_LENGTH) {
+            return true;
+        }
+
+        char lastChar = buffer.charAt(buffer.length() - 1);
+        return lastChar == '\n'
+                || lastChar == '。'
+                || lastChar == '！'
+                || lastChar == '？'
+                || lastChar == '；'
+                || lastChar == '：';
+    }
+    
     /**
      * 单轮流式聚合器
      * 把一轮流式分片拼成完整结果：完整文本、完整 toolCalls、finishReason、usage
      */
     @lombok.Data
     private static class StreamingRoundAccumulator {
-            
+        // 流式输出缓冲
+        private final StringBuilder streamChunkBuffer = new StringBuilder();
+        
         // 累计文本内容
         private final StringBuilder contentBuilder = new StringBuilder();
             
@@ -393,7 +461,33 @@ public class FunctionCallingServiceImpl implements FunctionCallingService {
                 contentBuilder.append(content);
             }
         }
-    
+        /**
+         * 追加流式输出缓冲内容。
+         *
+         * @param content 增量内容
+         */
+        public void appendStreamChunk(String content) {
+            if (content != null) {
+                streamChunkBuffer.append(content);
+            }
+        }
+
+        /**
+         * 获取当前流式输出缓冲内容。
+         *
+         * @return 缓冲内容
+         */
+        public String getStreamChunkBuffer() {
+            return streamChunkBuffer.toString();
+        }
+
+        /**
+         * 清空流式输出缓冲。
+         */
+        public void clearStreamChunkBuffer() {
+            streamChunkBuffer.setLength(0);
+        }
+        
         /**
          * 累积工具调用
          * 处理流式响应中的工具调用增量数据，根据 index 索引将分片数据拼接成完整的工具调用信息。

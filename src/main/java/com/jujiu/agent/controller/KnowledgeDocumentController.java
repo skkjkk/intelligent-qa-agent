@@ -1,60 +1,57 @@
 package com.jujiu.agent.controller;
 
 import com.jujiu.agent.common.result.Result;
-import com.jujiu.agent.model.dto.request.QueryKnowledgeBaseRequest;
 import com.jujiu.agent.model.dto.request.UploadDocumentRequest;
 import com.jujiu.agent.model.dto.response.DocumentProcessStatusResponse;
 import com.jujiu.agent.model.dto.response.KbDocumentResponse;
-import com.jujiu.agent.model.dto.response.KnowledgeQueryResponse;
 import com.jujiu.agent.service.kb.DocumentService;
-import com.jujiu.agent.service.kb.RagService;
 import com.jujiu.agent.util.SecurityUtils;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
-import jakarta.validation.Valid;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
-import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.util.List;
 
 /**
+ * 知识库文档控制器。
+ *
+ * <p>负责知识库文档的上传、查询、删除与状态追踪等生命周期管理能力。
+ *
  * @author 17644
  * @version 1.0.0
- * @since 2026/4/1 17:15
+ * @since 2026/4/11
  */
 @RestController
 @RequestMapping("/api/v1/kb/documents")
-@Tag(name = "知识库文档管理", description = "文档上传、查询与状态追踪")
+@Tag(name = "知识库文档管理", description = "文档上传、查询、删除与状态追踪")
 @Slf4j
-public class KnowledgeBaseController {
-
+public class KnowledgeDocumentController {
 
     private final DocumentService documentService;
-    private final RagService ragService;
 
-    public KnowledgeBaseController(DocumentService documentService,
-                                   RagService ragService) {
+    public KnowledgeDocumentController(DocumentService documentService) {
         this.documentService = documentService;
-        this.ragService = ragService;
     }
-    
+
     /**
-     * 从 Spring Security 上下文中获取当前登录用户的 ID
+     * 从 Spring Security 上下文中获取当前登录用户的 ID。
      *
-     * @return 当前用户 ID，如果未认证则可能抛出异常
+     * @return 当前用户 ID
      */
     private Long getCurrentUserId() {
         return SecurityUtils.getCurrentUserId();
     }
-    
+
     /**
      * 上传文档。
      *
-     * @param file    原始文件
-     * @param kbId 文档元数据
+     * @param file 原始文件
+     * @param title 文档标题
+     * @param visibility 可见性
+     * @param kbId 知识库 ID
      * @return 文档 ID
      */
     @PostMapping(consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
@@ -74,7 +71,6 @@ public class KnowledgeBaseController {
         Long documentId = documentService.uploadDocument(userId, file, request);
         return Result.success(documentId, "文档上传成功，正在处理中");
     }
-
     /**
      * 查询文档详情。
      *
@@ -89,13 +85,26 @@ public class KnowledgeBaseController {
         return Result.success(response);
     }
 
+    /**
+     * 查询文档列表。
+     *
+     * @param kbId 知识库 ID，可为空
+     * @return 文档列表
+     */
     @GetMapping
     @Operation(summary = "查询文档列表")
-    public Result<List<KbDocumentResponse>> listDocuments(@RequestParam(value = "kbId", required = false) Long kbId) {
+    public Result<List<KbDocumentResponse>> listDocuments(
+            @RequestParam(value = "kbId", required = false) Long kbId) {
         Long userId = getCurrentUserId();
         return Result.success(documentService.listDocuments(userId, kbId));
     }
 
+    /**
+     * 查询文档处理状态。
+     *
+     * @param documentId 文档 ID
+     * @return 文档处理状态
+     */
     @GetMapping("/{documentId}/status")
     @Operation(summary = "查询文档处理状态")
     public Result<DocumentProcessStatusResponse> getDocumentStatus(@PathVariable Long documentId) {
@@ -103,6 +112,12 @@ public class KnowledgeBaseController {
         return Result.success(documentService.getDocumentStatus(userId, documentId));
     }
 
+    /**
+     * 删除文档。
+     *
+     * @param documentId 文档 ID
+     * @return 删除结果
+     */
     @DeleteMapping("/{documentId}")
     @Operation(summary = "删除文档")
     public Result<Void> deleteDocument(@PathVariable Long documentId) {
@@ -110,35 +125,4 @@ public class KnowledgeBaseController {
         documentService.deleteDocument(userId, documentId);
         return Result.success(null, "文档删除成功");
     }
-    
-    
-    @PostMapping("/query")
-    @Operation(summary = "知识库问答", description = "基于知识库文档进行检索问答并返回引用信息")
-    public Result<KnowledgeQueryResponse> query(@RequestBody @Valid QueryKnowledgeBaseRequest request) {
-        Long userId = getCurrentUserId();
-        KnowledgeQueryResponse response = ragService.query(userId, request);
-        return Result.success(response);
-    }
-
-    @PostMapping("/{documentId}/index")
-    @Operation(summary = "手动触发文档索引", description = "将指定文档的分块写入 Elasticsearch")
-    public Result<Void> indexDocument(@PathVariable Long documentId) {
-        documentService.indexDocument(documentId);
-        return Result.success(null, "文档索引任务执行成功");
-    }
-
-    @PostMapping("/index/pending")
-    @Operation(summary = "批量索引待处理文档", description = "批量索引所有已解析成功但尚未完成索引的文档")
-    public Result<Void> indexPendingDocuments() {
-        documentService.indexPendingDocuments();
-        return Result.success(null, "待处理文档索引任务执行成功");
-    }
-
-    @PostMapping("/query/stream")
-    @Operation(summary = "知识库流式问答", description = "基于知识库文档进行流式检索问答")
-    public SseEmitter queryStream(@RequestBody @Valid QueryKnowledgeBaseRequest request) {
-        Long userId = getCurrentUserId();
-        return ragService.queryStream(userId, request);
-    }
-
 }

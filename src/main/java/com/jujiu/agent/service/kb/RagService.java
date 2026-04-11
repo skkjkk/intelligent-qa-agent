@@ -41,4 +41,14 @@ public interface RagService {
      */
     SseEmitter queryStream(Long userId, QueryKnowledgeBaseRequest request);
 
+    /**
+     * 构造知识库增强上下文。
+     *
+     * @param userId 当前用户 ID
+     * @param kbId 知识库 ID
+     * @param question 用户问题
+     * @param topK 检索数量
+     * @return 知识库上下文文本
+     */
+    String buildKnowledgeContext(Long userId, Long kbId, String question, Integer topK);
 }

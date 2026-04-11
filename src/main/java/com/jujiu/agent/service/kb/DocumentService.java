@@ -2,6 +2,7 @@ package com.jujiu.agent.service.kb;
 
 import com.jujiu.agent.model.dto.request.UploadDocumentRequest;
 import com.jujiu.agent.model.dto.response.DocumentProcessStatusResponse;
+import com.jujiu.agent.model.dto.response.KbBatchOperationResponse;
 import com.jujiu.agent.model.dto.response.KbDocumentResponse;
 import org.springframework.web.multipart.MultipartFile;
 
@@ -79,12 +80,28 @@ public interface DocumentService {
     /**
      * 索引所有待处理的文档。
      */
-    void indexPendingDocuments();
+    KbBatchOperationResponse indexPendingDocuments(Long userId);
     
     /**
      * 索引文档。
      *
      * @param documentId 文档 ID
      */
-    void indexDocument(Long documentId);
+    void indexDocument(Long userId, Long documentId);
+    
+    /**
+     * 重建单个文档索引。
+     *
+     * @param userId 当前用户 ID
+     * @param documentId 文档 ID
+     */
+    void rebuildIndex(Long userId, Long documentId);
+
+    /**
+     * 批量重建当前用户失败的文档索引。
+     *
+     * @param userId 当前用户 ID
+     */
+    KbBatchOperationResponse rebuildFailedIndexes(Long userId);
+    
 }

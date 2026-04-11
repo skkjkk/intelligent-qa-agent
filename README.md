@@ -1,6 +1,6 @@
-﻿# 智能问答Agent系统
+# 智能问答Agent系统
 
-> 基于 `Spring Boot 3` 的智能问答 Agent 后端，支持 `JWT` 认证、会话管理、同步聊天、`SSE` 流式响应、`Function Calling` 与工具调用。
+> 基于 `Spring Boot 3` 的智能问答 Agent 后端，支持 `JWT` 认证、会话管理、同步聊天、`SSE` 流式响应、`Function Calling`、工具调用与知识库 `RAG`。
 
 ## 文档导航
 
@@ -8,12 +8,17 @@
 - 需求基线：`docs/02-requirements/需求规格说明书.md`
 - 架构基线：`docs/03-architecture/系统架构设计.md`
 - 数据库设计：`docs/03-architecture/数据库设计.md`
+- RAG 架构：`docs/03-architecture/知识库与RAG架构设计.md`
+- RAG 当前完成情况：`docs/03-architecture/知识库与RAG当前完成情况.md`
+- 阶段性收尾清单：`docs/01-overview/知识库与Agent阶段性收尾清单.md`
 - 接口基线：`docs/04-api/API接口定义文档.md`
 - 运维检查：`docs/05-operations/环境配置检查清单.md`
 
 ## 项目简介
 
 这是一个围绕“认证 -> 会话/消息 -> 大模型调用 -> 工具执行 -> 回复持久化 -> 返回客户端”主链路构建的后端项目。
+
+当前项目已经从基础对话 Agent 后端演进为支持知识库增强的 Agent 系统，除原有聊天与工具调用能力外，还支持文档上传、异步解析、分块、向量索引、独立知识库问答、流式知识库问答、`knowledge_base` 工具调用、显式知识增强聊天、统计、健康检查与索引治理能力。
 
 当前代码已经实现：
 
@@ -23,6 +28,14 @@
 - 基于 `DeepSeek` 的 `Function Calling`
 - 工具注册、数据库配置加载与工具执行
 - Redis 限流、登录状态辅助控制与 Token 黑名单支持
+- 文档上传、MinIO 存储、Kafka 异步解析与分块入库
+- 基于 `embedding-3` 的向量化与 Redis 缓存
+- 基于 `Elasticsearch` 的分块索引与混合检索骨架
+- 独立知识库同步 / 流式问答、问答历史与反馈闭环
+- 知识库概览统计、文档统计、问答统计与健康检查
+- 单文档索引、批量索引、单文档重建索引与失败索引重建
+- 批量索引与批量重建接口支持返回结构化执行摘要
+- `knowledge_base` 工具接入与聊天显式知识增强
 
 ## 项目信息
 
@@ -31,7 +44,7 @@
 | **项目名称** | Intelligent QA Agent |
 | **项目路径** | `D:\IdeaCode\intelligent-qa-agent` |
 | **后端技术栈** | Java 17 + Spring Boot 3.4.x |
-| **主要能力** | 认证、对话、流式响应、Function Calling、工具执行 |
+| **主要能力** | 认证、对话、流式响应、Function Calling、工具执行、知识库 RAG |
 
 ## 技术栈
 
@@ -48,6 +61,10 @@
 | JWT | 0.12.5 | Token 认证 |
 | SpringDoc OpenAPI | 2.8.6 | API 文档 |
 | Hutool | 5.8.25 | 工具库 |
+| Elasticsearch | 8.x | 知识库分块索引与向量检索 |
+| Kafka | - | 文档异步处理流水线 |
+| MinIO | - | 知识库原始文件存储 |
+| PDFBox / POI / Jsoup | - | 文档解析 |
 
 ## 核心功能
 
@@ -68,6 +85,7 @@
 - 多轮上下文管理
 - 会话标题生成
 - Token 用量记录
+- 显式知识库增强聊天
 
 ### Function Calling 模块
 
@@ -85,6 +103,19 @@
 - `TranslatorTool`：翻译
 - `TimeTool`：时间查询
 - `CalculatorTool`：计算器
+- `KnowledgeBaseTool`：知识库检索问答
+
+### 知识库与 RAG 模块
+
+- 文档上传、详情、列表、状态查询与删除
+- `txt / md / pdf / docx / html` 文档解析
+- Kafka 驱动的异步处理链路
+- 分块入库、Embedding 向量化与 Elasticsearch 索引
+- 独立知识库同步问答与流式问答
+- 问答历史查询与反馈提交
+- 概览统计、文档统计、问答统计与健康检查
+- 单文档索引、批量索引、重建索引与失败索引恢复
+- 聊天显式知识增强
 
 ## 系统架构
 
@@ -99,6 +130,10 @@ flowchart TD
     D --> H[DeepSeekClient]
     D --> I[ToolRegistry]
     I --> J[AbstractTool 实现]
+    D --> K[KnowledgeBase / RagService]
+    K --> L[(Elasticsearch)]
+    K --> M[(MinIO)]
+    K --> N[(Kafka)]
 ```
 
 ### 分层说明
@@ -109,6 +144,8 @@ flowchart TD
 - `client`：第三方模型服务调用封装
 - `tool`：工具抽象、工具注册、工具实现
 - `security`：JWT 认证过滤与令牌处理
+- `service.kb`：知识库文档处理、检索、RAG、统计与健康检查
+- `parser / storage / mq / search`：知识库解析、存储、异步流水线与索引能力
 
 ## 核心流程
 
@@ -152,6 +189,42 @@ flowchart TD
     F --> G[返回最终回复]
 ```
 
+### 知识库处理流程
+
+```mermaid
+flowchart TD
+    A[上传文档] --> B[MinIO 存储原始文件]
+    B --> C[写入 kb_document]
+    C --> D[发送 Kafka 事件]
+    D --> E[DocumentProcessConsumer]
+    E --> F[DocumentParser 提取文本]
+    F --> G[ChunkService 分块]
+    G --> H[写入 kb_chunk]
+    H --> I[EmbeddingService 向量化]
+    I --> J[Elasticsearch 建索引]
+```
+
+### 知识库问答流程
+
+```mermaid
+sequenceDiagram
+    participant Client as 客户端
+    participant Controller as KnowledgeQueryController
+    participant Rag as RagServiceImpl
+    participant Search as VectorSearchServiceImpl
+    participant DS as DeepSeekClient
+    participant DB as MySQL
+
+    Client->>Controller: /api/v1/kb/query
+    Controller->>Rag: query(...)
+    Rag->>Search: search(...)
+    Search-->>Rag: TopK 分块结果
+    Rag->>DS: 携带上下文生成答案
+    DS-->>Rag: 返回答案
+    Rag->>DB: 写入 kb_query_log / kb_retrieval_trace
+    Rag-->>Controller: answer + citations
+```
+
 ## 项目结构
 
 ```text
@@ -165,9 +238,13 @@ intelligent-qa-agent/
 │   ├── config/                        # 配置类
 │   ├── controller/                    # 控制器
 │   ├── model/                         # DTO / Entity
+│   ├── mq/                            # Kafka 生产消费
+│   ├── parser/                        # 文档解析器
 │   ├── repository/                    # 数据访问层
+│   ├── search/                        # ES 索引文档
 │   ├── security/                      # JWT 认证相关
 │   ├── service/                       # 业务服务
+│   ├── storage/                       # MinIO 文件服务
 │   └── tool/                          # 工具抽象、注册中心、工具实现
 ├── src/main/resources/                # 配置文件
 └── pom.xml                            # Maven 配置
@@ -182,6 +259,12 @@ intelligent-qa-agent/
 - `session`
 - `message`
 - `tool`
+- `kb_document`
+- `kb_chunk`
+- `kb_query_log`
+- `kb_query_feedback`
+- `kb_document_process_log`
+- `kb_retrieval_trace`
 
 详见：`sql/init.sql` 与 `docs/03-architecture/数据库设计.md`
 
@@ -224,6 +307,43 @@ http://localhost:8080/swagger-ui.html
 | `/list` | GET | 获取工具列表 |
 | `/execute` | POST | 执行指定工具 |
 
+### 知识库文档接口 `/api/v1/kb/documents`
+
+| 接口 | 方法 | 说明 |
+|------|------|------|
+| `` | POST | 上传文档 |
+| `` | GET | 查询文档列表 |
+| `/{documentId}` | GET | 查询文档详情 |
+| `/{documentId}/status` | GET | 查询文档处理状态 |
+| `/{documentId}` | DELETE | 删除文档 |
+
+### 知识库问答接口 `/api/v1/kb/query`
+
+| 接口 | 方法 | 说明 |
+|------|------|------|
+| `` | POST | 知识库同步问答 |
+| `/stream` | POST | 知识库流式问答 |
+| `/history` | GET | 查询问答历史 |
+| `/{queryLogId}/feedback` | POST | 提交问答反馈 |
+
+### 知识库统计与健康接口 `/api/v1/kb`
+
+| 接口 | 方法 | 说明 |
+|------|------|------|
+| `/stats/overview` | GET | 查询知识库概览统计 |
+| `/stats/documents` | GET | 查询知识库文档统计 |
+| `/stats/queries` | GET | 查询知识库问答统计 |
+| `/health` | GET | 知识库健康检查 |
+
+### 知识库索引接口 `/api/v1/kb/index`
+
+| 接口 | 方法 | 说明 |
+|------|------|------|
+| `/{documentId}` | POST | 手动触发单文档索引 |
+| `/pending` | POST | 批量索引当前用户待处理文档，并返回批量执行摘要 |
+| `/rebuild/{documentId}` | POST | 重建单文档索引 |
+| `/rebuild/failed` | POST | 批量重建当前用户失败索引，并返回批量执行摘要 |
+
 ## 快速开始
 
 ### 1. 环境要求
@@ -232,6 +352,9 @@ http://localhost:8080/swagger-ui.html
 - Maven 3.9+
 - MySQL 8.0+
 - Redis
+- Elasticsearch 8.x
+- Kafka
+- MinIO
 
 ### 2. 数据库初始化
 
@@ -260,6 +383,15 @@ deepseek:
   max-messages-per-minute: 100
   rate-limit-window-seconds: 60
 
+knowledge-base:
+  embedding:
+    api-url: https://open.bigmodel.cn/api/paas/v4/embeddings
+    api-key: ${KB_EMBEDDING_API_KEY:}
+    model: embedding-3
+    dimension: 2048
+  elasticsearch:
+    index-name: kb_chunks_v2
+
 app:
   cors:
     allowed-origins:
@@ -272,6 +404,10 @@ app:
 - `DB_PASSWORD`
 - `JWT_SECRET`
 - `DEEPSEEK_API_KEY`
+- `KB_EMBEDDING_API_KEY`
+- `KB_MINIO_ENDPOINT`
+- `KB_MINIO_ACCESS_KEY`
+- `KB_MINIO_SECRET_KEY`
 - `AMAP_WEATHER_KEY`（可选）
 - `SERPAPI_API_KEY`（可选）
 - `BAIDU_TRANSLATE_APP_ID`（可选）
@@ -318,12 +454,28 @@ http://localhost:8080/swagger-ui.html
 
 - `docs/archive/solutions/Function Calling实现方案.md`
 
+### 知识库与 RAG
+
+当前知识库与 RAG 开发已经完成主链路，包括：
+
+1. 文档上传、异步解析、分块与索引
+2. 独立知识库同步 / 流式问答
+3. `knowledge_base` 工具接入
+4. 聊天显式知识增强
+5. 问答历史与反馈闭环
+6. 概览统计、文档统计、问答统计与健康检查
+7. 单文档重建索引与失败索引批量重建
+8. 批量索引与批量重建结果摘要返回
+
 ## 项目亮点
 
 - **认证链路完整**：基于 `Spring Security + JWT` 实现登录、刷新、登出与黑名单辅助控制。
 - **聊天能力完整**：支持同步聊天与 `SSE` 流式聊天，两条链路共享核心准备流程。
 - **Function Calling 闭环**：模型可返回 `tool_calls`，后端完成工具执行并继续补全最终答案。
 - **工具体系可扩展**：采用 `AbstractTool + ToolRegistry + 数据库配置` 的组合式设计。
+- **知识库能力完整接入 Agent**：支持文档处理、向量索引、独立 KB 问答、工具调用与聊天增强。
+- **知识库运维能力初步完善**：支持 history、feedback、stats、health、rebuild 与批量执行摘要返回。
+- **流式链路已收口**：支持聊天流式、知识库流式问答与流式输出缓冲。
 - **工程化持续演进**：聊天限流、聊天持久化、公共逻辑抽取与安全收口正在逐步完善。
 
 ## 相关文档
@@ -331,16 +483,19 @@ http://localhost:8080/swagger-ui.html
 | 文档 | 说明 |
 |------|------|
 | `docs/01-overview/项目状态快照.md` | 项目当前状态 |
+| `docs/01-overview/知识库与Agent阶段性收尾清单.md` | 阶段性收尾与下一轮 TODO |
 | `docs/03-architecture/系统架构设计.md` | 系统架构设计 |
 | `docs/03-architecture/数据库设计.md` | 数据库设计 |
+| `docs/03-architecture/知识库与RAG架构设计.md` | 知识库与 RAG 架构设计 |
+| `docs/03-architecture/知识库与RAG当前完成情况.md` | 当前 RAG 完成情况 |
 | `docs/04-api/API接口定义文档.md` | API 文档 |
 | `docs/05-operations/环境配置检查清单.md` | 环境与运维检查 |
 | `docs/archive/solutions/Function Calling实现方案.md` | Function Calling 方案 |
 
 ## 后续规划
 
-- 继续统一工具执行结构化结果与错误包装
-- 继续增强工具调用可观测性
-- 持续降低聊天主流程复杂度
-- 补充核心服务自动化测试
+- 继续增强 `knowledge_base` 工具与聊天增强的协同策略
+- 补充知识库与 Agent 主链路自动化测试
+- 继续细化知识库统计、健康检查与索引治理能力
+- 持续降低聊天与 Function Calling 主流程复杂度
 - 持续同步 README / API / 运维文档与代码现状

@@ -16,6 +16,7 @@ import com.jujiu.agent.model.entity.KbQueryLog;
 import com.jujiu.agent.model.entity.KbRetrievalTrace;
 import com.jujiu.agent.repository.KbQueryLogRepository;
 import com.jujiu.agent.repository.KbRetrievalTraceRepository;
+import com.jujiu.agent.service.kb.QueryLogService;
 import com.jujiu.agent.service.kb.RagService;
 import com.jujiu.agent.service.kb.VectorSearchService;
 import jakarta.validation.constraints.NotBlank;
@@ -70,14 +71,15 @@ public class RagServiceImpl implements RagService {
     private final KnowledgeBaseProperties  knowledgeBaseProperties;
     private final ExecutorService chatExecutor;
     public final ObjectMapper objectMapper;
-    
+    private final QueryLogService queryLogService;
     public RagServiceImpl(VectorSearchService vectorSearchService,
                           DeepSeekClient deepSeekClient,
                           KbQueryLogRepository kbQueryLogRepository,
                           KbRetrievalTraceRepository kbRetrievalTraceRepository,
                           KnowledgeBaseProperties knowledgeBaseProperties,
                           ObjectMapper objectMapper,
-                          ExecutorService chatExecutor) {
+                          ExecutorService chatExecutor,
+                          QueryLogService queryLogService) {
         this.vectorSearchService = vectorSearchService;
         this.deepSeekClient = deepSeekClient;
         this.kbQueryLogRepository = kbQueryLogRepository;
@@ -85,6 +87,7 @@ public class RagServiceImpl implements RagService {
         this.knowledgeBaseProperties = knowledgeBaseProperties;
         this.objectMapper = objectMapper;
         this.chatExecutor = chatExecutor;
+        this.queryLogService = queryLogService;
     }
 
     /**
@@ -137,7 +140,7 @@ public class RagServiceImpl implements RagService {
         );
 
         // 保存查询日志
-        KbQueryLog queryLog = saveQueryLog(
+        KbQueryLog queryLog = queryLogService.saveQueryLog(
                 userId,
                 kbId,
                 request,
@@ -148,9 +151,9 @@ public class RagServiceImpl implements RagService {
                 DEFAULT_QUERY_STATUS_SUCCESS,
                 null
         );
-        
+
         // 保存检索轨迹
-        saveRetrievalTrace(queryLog.getId(), searchResults);
+        queryLogService.saveRetrievalTrace(queryLog.getId(), searchResults);
 
         // 封装响应结果
         return KnowledgeQueryResponse.builder()
@@ -161,6 +164,51 @@ public class RagServiceImpl implements RagService {
                 .totalTokens(deepSeekResult.getTotalTokens())
                 .latencyMs(latencyMs)
                 .build();
+    }
+
+    /**
+     * 构造知识库增强上下文。
+     *
+     * <p>该方法用于聊天增强场景，只负责检索知识片段并拼接上下文，
+     * 不负责直接调用模型生成最终答案。
+     *
+     * @param userId 当前用户 ID
+     * @param kbId 知识库 ID
+     * @param question 用户问题
+     * @param topK 检索数量
+     * @return 知识库上下文文本，未命中时返回空字符串
+     */
+    @Override
+    public String buildKnowledgeContext(Long userId, Long kbId, String question, Integer topK) {
+        if (userId == null || userId <= 0) {
+            throw new BusinessException(ResultCode.INVALID_PARAMETER, "userId 不能为空");
+        }
+        if (question == null || question.isBlank()) {
+            throw new BusinessException(ResultCode.INVALID_PARAMETER, "question 不能为空");
+        }
+        Long targetKbId = kbId == null ? 1L : kbId;
+        Integer targetTopK = (topK == null || topK <= 0) ? 5 : topK;
+        
+        log.info("[KB][CONTEXT] 开始构造知识上下文 - kbId={}, userId={}, topK={}, questionLength={}",
+                targetKbId, userId, targetTopK, question.length());
+
+        List<ChunkSearchResult> searchResults = vectorSearchService.search(
+                targetKbId,
+                userId,
+                question,
+                targetTopK);
+        
+        if (searchResults == null || searchResults.isEmpty()) {
+            log.info("[KB][CONTEXT] 未检索到可用知识片段 - kbId={}, userId={}", targetKbId, userId);
+            return "";
+        }
+        
+        String context = buildContext(searchResults);
+
+        log.info("[KB][CONTEXT] 知识上下文构造完成 - kbId={}, userId={}, resultCount={}, contextLength={}",
+                targetKbId, userId, searchResults.size(), context.length());
+        
+        return context;
     }
 
     /**
@@ -513,7 +561,7 @@ public class RagServiceImpl implements RagService {
         long latencyMs = System.currentTimeMillis() - startTime;
         String answer = "抱歉，知识库中没有足够信息支持回答该问题。";
 
-        saveQueryLog(
+        queryLogService.saveQueryLog(
                 userId,
                 kbId,
                 request,

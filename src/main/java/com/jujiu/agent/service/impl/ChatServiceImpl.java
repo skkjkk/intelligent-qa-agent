@@ -26,6 +26,7 @@ import com.jujiu.agent.service.ChatPersistenceService;
 import com.jujiu.agent.service.ChatRateLimitService;
 import com.jujiu.agent.service.ChatService;
 import com.jujiu.agent.service.FunctionCallingService;
+import com.jujiu.agent.service.kb.RagService;
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -48,32 +49,39 @@ import java.util.concurrent.ExecutorService;
 @Slf4j
 public class ChatServiceImpl implements ChatService {
     
-    @Autowired
-    private MessageRepository messageRepository;
-
-    @Autowired
-    private SessionRepository sessionRepository;
+    private final MessageRepository messageRepository;
+    private final SessionRepository sessionRepository;
+    private final DeepSeekClient deepSeekClient;
+    private final DeepSeekProperties deepSeekProperties;
+    private final FunctionCallingService functionCallingService;
+    private final ExecutorService chatExecutor;
+    private final ObjectMapper objectMapper;
+    private final ChatRateLimitService chatRateLimitService;
+    private final ChatPersistenceService chatPersistenceService;
+    private final RagService ragService;
     
-    @Autowired
-    private DeepSeekClient deepSeekClient;
-    
-    @Autowired
-    private DeepSeekProperties deepSeekProperties;
-    
-    @Autowired
-    private FunctionCallingService functionCallingService;
+    public ChatServiceImpl(MessageRepository messageRepository, 
+                           SessionRepository sessionRepository,
+                           DeepSeekClient deepSeekClient, 
+                           DeepSeekProperties deepSeekProperties, 
+                           FunctionCallingService functionCallingService, 
+                           ExecutorService chatExecutor, 
+                           ObjectMapper objectMapper, 
+                           ChatRateLimitService chatRateLimitService, 
+                           ChatPersistenceService chatPersistenceService,
+                           RagService ragService) {
+        this.messageRepository = messageRepository;
+        this.sessionRepository = sessionRepository;
+        this.deepSeekClient = deepSeekClient;
+        this.deepSeekProperties = deepSeekProperties;
+        this.functionCallingService = functionCallingService;
+        this.chatExecutor = chatExecutor;
+        this.objectMapper = objectMapper;
+        this.chatRateLimitService = chatRateLimitService;
+        this.chatPersistenceService = chatPersistenceService;
+        this.ragService = ragService;
+    }
 
-    @Autowired
-    private ExecutorService chatExecutor;
-    
-    @Autowired
-    private ObjectMapper objectMapper;
-
-    @Autowired
-    private ChatRateLimitService chatRateLimitService;
-
-    @Autowired
-    private ChatPersistenceService chatPersistenceService;
     /**
      * 生成会话ID：session_ + 雪花ID
      */
@@ -216,7 +224,7 @@ public class ChatServiceImpl implements ChatService {
         log.info("[CHAT][DEEPSEEK_CALL] 开始调用 DeepSeek API - sessionId={}, contextSize={}", 
                 request.getSessionId(), deepSeekMessages.size());
         
-        DeepSeekResult result = functionCallingService.chatWithTools(deepSeekMessages);
+        DeepSeekResult result = functionCallingService.chatWithTools(userId,deepSeekMessages);
         String aiReply = result.getReply();
         
         log.info("[CHAT][DEEPSEEK_RESPONSE] DeepSeek 返回成功 - sessionId={}, totalTokens={}, promptTokens={}, completionTokens={}", 
@@ -372,6 +380,77 @@ public class ChatServiceImpl implements ChatService {
 
         return deepSeekMessages;
     }
+    
+    /**
+     * 按需追加知识库增强上下文。
+     *
+     * <p>当请求显式开启知识库增强时，先从知识库检索与当前问题相关的片段，
+     * 再以系统消息形式插入到对话上下文中，供后续模型生成与工具调用复用。
+     *
+     * @param userId 当前用户 ID
+     * @param request 聊天请求
+     * @param deepSeekMessages 当前对话上下文
+     */
+    private void appendKnowledgeContextIfNeeded(Long userId,
+                                                SendMessageRequest request,
+                                                List<DeepSeekMessage> deepSeekMessages) {
+        if (request.getEnableKnowledgeBase() == null || !request.getEnableKnowledgeBase()) {
+            return;
+        }
+
+        log.info("[CHAT][KB_ENHANCE] 检测到知识库增强已开启 - userId={}, sessionId={}, kbId={}, topK={}",
+                userId,
+                request.getSessionId(),
+                request.getKnowledgeBaseId(),
+                request.getRetrievalTopK()
+        );
+        
+        String knowledgeContext = ragService.buildKnowledgeContext(userId,
+                request.getKnowledgeBaseId(),
+                request.getMessage(),
+                request.getRetrievalTopK()
+        );
+        
+        if (knowledgeContext == null || knowledgeContext.isBlank()) {
+            log.info("[CHAT][KB_ENHANCE] 未检索到可注入的知识上下文 - userId={}, sessionId={}",
+                    userId, request.getSessionId());
+            return;
+        }
+        DeepSeekMessage knowledgeMessage = new DeepSeekMessage();
+        knowledgeMessage.setRole(DeepSeekMessage.MessageRole.SYSTEM);
+        knowledgeMessage.setContent(buildKnowledgeEnhancementPrompt(knowledgeContext));
+        
+        int insertIndex = deepSeekMessages.isEmpty() ? 0 : 1;
+        deepSeekMessages.add(insertIndex, knowledgeMessage);
+
+        log.info("[CHAT][KB_ENHANCE] 知识上下文注入完成 - userId={}, sessionId={}, insertIndex={}, contextLength={}",
+                userId, request.getSessionId(), insertIndex, knowledgeContext.length());
+        
+        log.info("[CHAT][KB_ENHANCE] 当前对话已启用显式知识增强，建议模型优先基于已注入资料回答 - userId={}, sessionId={}",
+                userId, request.getSessionId());
+
+    }
+
+    /**
+     * 构造知识库增强提示词。
+     *
+     * @param knowledgeContext 知识库上下文
+     * @return 系统提示文本
+     */
+    private String buildKnowledgeEnhancementPrompt(String knowledgeContext) {
+        return """
+            以下是与当前问题相关的知识库参考资料，已经提前完成检索，请优先使用这些资料回答当前问题。
+
+            回答要求：
+            1. 如果以下资料已经足够回答当前问题，请直接基于资料作答
+            2. 不要重复调用 knowledge_base 工具去查询相同内容
+            3. 只有当以下资料明显不足以回答问题时，才考虑调用其他必要工具
+            4. 不要编造资料中不存在的事实
+
+            【知识库参考资料】
+            %s
+            """.formatted(knowledgeContext);
+    }
 
     /**
      * 准备聊天对话
@@ -412,10 +491,13 @@ public class ChatServiceImpl implements ChatService {
         
         // 构建多轮对话上下文
         List<DeepSeekMessage> deepSeekMessages = buildChatContext(historyMessages);
-
+        
+        // 如显式启用知识库增强，则插入知识上下文
+        appendKnowledgeContextIfNeeded(userId, request, deepSeekMessages);
+        
         return new ChatPrepareResult(session, userMessage, deepSeekMessages);
     }
-
+    
 
     /**
      * 聊天准备结果
@@ -464,6 +546,7 @@ public class ChatServiceImpl implements ChatService {
             try {
                 // 调用 DeepSeek 流式接口
                 FunctionCallingService.StreamingChatResult result = functionCallingService.streamChatWithTools(
+                        userId,
                         deepSeekMessages,
                         event -> {
                             // 转发事件给前端

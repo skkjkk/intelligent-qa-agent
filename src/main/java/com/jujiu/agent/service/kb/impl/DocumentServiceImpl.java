@@ -6,6 +6,7 @@ import com.jujiu.agent.common.exception.BusinessException;
 import com.jujiu.agent.common.result.ResultCode;
 import com.jujiu.agent.model.dto.request.UploadDocumentRequest;
 import com.jujiu.agent.model.dto.response.DocumentProcessStatusResponse;
+import com.jujiu.agent.model.dto.response.KbBatchOperationResponse;
 import com.jujiu.agent.model.dto.response.KbDocumentResponse;
 import com.jujiu.agent.model.entity.KbChunk;
 import com.jujiu.agent.model.entity.KbDocument;
@@ -29,6 +30,7 @@ import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 
@@ -95,7 +97,7 @@ public class DocumentServiceImpl implements DocumentService {
         // 获取知识库 ID，默认为 1
         Long kbId = request.getKbId() == null ? 1L : request.getKbId();
         // 检查同一知识库中是否存在相同内容的文档
-        checkDuplicateDocument(kbId, contentHash);
+        checkDuplicateDocument(kbId, userId, contentHash);
             
         // 生成唯一的对象存储名称并上传到 MinIO
         String objectName = minioFileService.generateObjectName(originalFilename);
@@ -198,13 +200,14 @@ public class DocumentServiceImpl implements DocumentService {
      * @param contentHash 文件内容哈希值，用于唯一标识文件内容
      * @throws BusinessException 当文档已存在时抛出，错误码为 DOCUMENT_DUPLICATE
      */
-    private void checkDuplicateDocument(Long kbId, String contentHash) {
+    private void checkDuplicateDocument(Long kbId,Long userId, String contentHash) {
         // 查询数据库中是否存在相同内容的文档
         KbDocument existing = kbDocumentRepository.selectOne(
                 new LambdaQueryWrapper<KbDocument>()
                         .eq(KbDocument::getKbId, kbId)
                         .eq(KbDocument::getContentHash, contentHash)
                         .eq(KbDocument::getDeleted, 0)
+                        .eq(KbDocument::getOwnerUserId, userId)
                         .last("LIMIT 1")
         );
         // 如果存在未删除的重复文档，抛出异常
@@ -412,36 +415,61 @@ public class DocumentServiceImpl implements DocumentService {
      * <p>后续可在该方法基础上扩展批量调度、分页处理与失败重试能力。
      */
     @Override
-    public void indexPendingDocuments() {
-        log.info("[KB][INDEX] 开始批量索引待处理文档");
+    public KbBatchOperationResponse indexPendingDocuments(Long userId) {
+        if (userId == null || userId <= 0) {
+            throw new BusinessException(ResultCode.INVALID_PARAMETER, "userId 不能为空");
+        }
 
+        log.info("[KB][INDEX] 开始批量索引待处理文档 - userId={}", userId);
+        
         List<KbDocument> pendingDocuments = kbDocumentRepository.selectList(
                 new LambdaQueryWrapper<KbDocument>()
                         .eq(KbDocument::getDeleted, 0)
                         .eq(KbDocument::getEnabled, 1)
                         .eq(KbDocument::getParseStatus, KbProcessStatus.SUCCESS.name())
+                        .eq(KbDocument::getOwnerUserId, userId)
+                        .gt(KbDocument::getChunkCount, 0)
                         .and(wrapper -> wrapper
                                 .eq(KbDocument::getIndexStatus, KbProcessStatus.PENDING.name())
                                 .or()
                                 .eq(KbDocument::getIndexStatus, KbProcessStatus.FAILED.name()))
+
                         .orderByAsc(KbDocument::getCreatedAt)
 
         );
 
         if (pendingDocuments == null || pendingDocuments.isEmpty()) {
-            log.info("[KB][INDEX] 没有待索引文档");
-            return;
+            log.info("[KB][INDEX] 没有待索引文档 - userId={}", userId);
+            return KbBatchOperationResponse.builder()
+                    .totalCount(0)
+                    .successCount(0)
+                    .failedCount(0)
+                    .failedDocumentIds(List.of())
+                    .message("没有待索引文档")
+                    .build();
         }
 
-        log.info("[KB][INDEX] 查询到待索引文档数量={}", pendingDocuments.size());
-
+        log.info("[KB][INDEX] 查询到待索引文档数量={} - userId={}", pendingDocuments.size(), userId);
+        
+        int successCount = 0;
+        List<Long> failedDocumentIds = new ArrayList<>();
+        
         for (KbDocument document : pendingDocuments) {
             try {
-                indexDocument(document.getId());
+                indexDocument(userId, document.getId());
+                successCount++;
             } catch (Exception e) {
-                log.error("[KB][INDEX] 文档索引失败，documentId={}", document.getId(), e);
+                failedDocumentIds.add(document.getId());
+                log.error("[KB][INDEX] 文档索引失败 - userId={}, documentId={}", userId, document.getId(), e);
             }
         }
+        return KbBatchOperationResponse.builder()
+                .totalCount(pendingDocuments.size())
+                .successCount(successCount)
+                .failedCount(failedDocumentIds.size())
+                .failedDocumentIds(failedDocumentIds)
+                .message(failedDocumentIds.isEmpty() ? "待处理文档索引任务执行成功" : "待处理文档索引任务部分失败")
+                .build();
     }
 
     /**
@@ -461,18 +489,25 @@ public class DocumentServiceImpl implements DocumentService {
      */
     @Transactional
     @Override
-    public void indexDocument(Long documentId) {
+    public void indexDocument(Long userId, Long documentId) {
+        if (userId == null || userId <= 0) {
+            throw new BusinessException(ResultCode.INVALID_PARAMETER, "userId 不能为空");
+        }
         if (documentId == null || documentId <= 0) {
             throw new BusinessException(ResultCode.INVALID_PARAMETER, "documentId 不能为空");
         }
 
-        log.info("[KB][INDEX] 开始索引文档，documentId={}", documentId);
+        log.info("[KB][INDEX] 开始索引文档 - userId={}, documentId={}", userId, documentId);
 
         KbDocument document = kbDocumentRepository.selectById(documentId);
         if (document == null || document.getDeleted() == 1) {
             throw new BusinessException(ResultCode.DOCUMENT_NOT_FOUND, "文档不存在");
         }
-
+        
+        if (!userId.equals(document.getOwnerUserId())) {
+            throw new BusinessException(ResultCode.DOCUMENT_NOT_FOUND, "文档不存在");
+        }
+        
         if (document.getEnabled() == null || document.getEnabled() != 1) {
             throw new BusinessException(ResultCode.INVALID_PARAMETER, "文档已禁用，无法索引");
         }
@@ -508,19 +543,19 @@ public class DocumentServiceImpl implements DocumentService {
 
             int successCount = 0;
             for (KbChunk chunk : chunks) {
-                log.info("[KB][INDEX] 开始处理分块索引 - documentId={}, chunkId={}, chunkIndex={}",
-                        documentId, chunk.getId(), chunk.getChunkIndex());
+                log.info("[KB][INDEX] 开始处理分块索引 - userId={}, documentId={}, chunkId={}, chunkIndex={}",
+                        userId, documentId, chunk.getId(), chunk.getChunkIndex());
 
                 float[] vector = embeddingService.embedDocument(chunk.getContent());
 
-                log.info("[KB][EMBEDDING] 分块向量生成成功 - documentId={}, chunkId={}, chunkIndex={}, dimension={}",
-                        documentId, chunk.getId(), chunk.getChunkIndex(), vector.length);
+                log.info("[KB][EMBEDDING] 分块向量生成成功 - userId={}, documentId={}, chunkId={}, chunkIndex={}, dimension={}",
+                        userId, documentId, chunk.getId(), chunk.getChunkIndex(), vector.length);
 
                 elasticsearchIndexService.indexChunk(document, chunk, vector);
                 
                 successCount++;
-                log.info("[KB][INDEX] 分块索引写入成功 - documentId={}, chunkId={}, chunkIndex={}, successCount={}",
-                        documentId, chunk.getId(), chunk.getChunkIndex(), successCount);
+                log.info("[KB][INDEX] 分块索引写入成功 - userId={}, documentId={}, chunkId={}, chunkIndex={}, successCount={}",
+                        userId, documentId, chunk.getId(), chunk.getChunkIndex(), successCount);
             }
             
             document.setIndexStatus(KbProcessStatus.SUCCESS.name());
@@ -533,7 +568,8 @@ public class DocumentServiceImpl implements DocumentService {
             insertProcessLog(documentId, KbProcessStage.INDEX, KbProcessStatus.SUCCESS,
                     "文档索引完成，chunkCount=" + chunks.size());
             
-            log.info("[KB][INDEX] 文档索引完成 - documentId={}, chunkCount={}", documentId, chunks.size());
+            log.info("[KB][INDEX] 文档索引完成 - userId={}, documentId={}, chunkCount={}", 
+                    userId, documentId, chunks.size());
 
         } catch (Exception e) {
             
@@ -547,13 +583,166 @@ public class DocumentServiceImpl implements DocumentService {
             insertProcessLog(documentId, KbProcessStage.INDEX, KbProcessStatus.FAILED,
                     "文档索引失败：" + e.getMessage());
 
-            log.error("[KB][INDEX] 文档索引失败 - documentId={}", documentId, e);
+            log.error("[KB][INDEX] 文档索引失败 - userId={}, documentId={}", userId, documentId, e);
             
             throw e instanceof BusinessException ? (BusinessException) e
                     : new BusinessException(ResultCode.SYSTEM_ERROR, "文档索引失败");
         }
     }
-    
+
+    /**
+     * 校验文档是否满足重建索引条件。
+     *
+     * <p>当前校验内容包括：
+     * <ul>
+     *     <li>文档存在且未删除</li>
+     *     <li>文档属于当前用户</li>
+     *     <li>文档已启用</li>
+     *     <li>文档解析状态为 SUCCESS</li>
+     *     <li>文档分块数量大于 0</li>
+     *     <li>数据库中实际存在分块数据</li>
+     * </ul>
+     *
+     * @param userId 当前用户 ID
+     * @param documentId 文档 ID
+     * @return 文档实体
+     */
+    private KbDocument validateDocumentForRebuild(Long userId, Long documentId) {
+        KbDocument document = kbDocumentRepository.selectById(documentId);
+        
+        if (document == null || document.getDeleted() == 1) {
+            throw new BusinessException(ResultCode.DOCUMENT_NOT_FOUND, "文档不存在");
+        }
+
+        if (!userId.equals(document.getOwnerUserId())) {
+            throw new BusinessException(ResultCode.DOCUMENT_NOT_FOUND, "文档不存在");
+        }
+
+        if (document.getEnabled() == null || document.getEnabled() != 1) {
+            throw new BusinessException(ResultCode.INVALID_PARAMETER, "文档已禁用，无法重建索引");
+        }
+
+        if (!KbProcessStatus.SUCCESS.name().equals(document.getParseStatus())) {
+            throw new BusinessException(ResultCode.INVALID_PARAMETER, "文档尚未完成解析，无法重建索引");
+        }
+
+        if (document.getChunkCount() == null || document.getChunkCount() <= 0) {
+            throw new BusinessException(ResultCode.INVALID_PARAMETER, "文档分块不存在，无法重建索引");
+        }
+
+        List<KbChunk> chunks = kbChunkRepository.selectList(
+                new LambdaQueryWrapper<KbChunk>()
+                        .eq(KbChunk::getDocumentId, documentId)
+                        .eq(KbChunk::getEnabled, 1)
+                        .last("LIMIT 1")
+        );
+
+        if (chunks == null || chunks.isEmpty()) {
+            throw new BusinessException(ResultCode.INVALID_PARAMETER, "文档分块不存在，无法重建索引");
+        }
+
+        return document;
+    }
+
+    /**
+     * 重建单个文档索引。
+     *
+     * <p>执行顺序：
+     * <ol>
+     *     <li>校验文档归属与可访问性</li>
+     *     <li>删除 Elasticsearch 中已有索引数据</li>
+     *     <li>重新执行文档索引流程</li>
+     * </ol>
+     *
+     * @param userId 当前用户 ID
+     * @param documentId 文档 ID
+     */
+    @Override
+    public void rebuildIndex(Long userId, Long documentId) {
+        if (userId == null || userId <= 0) {
+            throw new BusinessException(ResultCode.INVALID_PARAMETER, "userId 不能为空");
+        }
+        if (documentId == null || documentId <= 0) {
+            throw new BusinessException(ResultCode.INVALID_PARAMETER, "documentId 不能为空");
+        }
+        
+        KbDocument document = validateDocumentForRebuild(userId, documentId);
+        
+        log.info("[KB][REBUILD] 开始重建文档索引 - userId={}, documentId={}", userId, documentId);
+        log.info("[KB][REBUILD] 文档已通过重建前置校验，准备删除旧索引 - userId={}, documentId={}, chunkCount={}",
+                userId, documentId, document.getChunkCount());
+        
+        try {
+            elasticsearchIndexService.deleteByDocumentId(documentId);
+            log.info("[KB][REBUILD] 已删除旧索引数据 - userId={}, documentId={}", userId, documentId);
+        } catch (Exception e) {
+            log.warn("[KB][REBUILD] 删除旧索引数据失败，继续尝试重建 - userId={}, documentId={}",
+                    userId, documentId, e);
+        }
+        
+        indexDocument(userId, documentId);
+
+        log.info("[KB][REBUILD] 文档索引重建完成 - userId={}, documentId={}", userId, documentId);
+    }
+
+    /**
+     * 批量重建当前用户失败的文档索引。
+     *
+     * @param userId 当前用户 ID
+     */
+    @Override
+    public KbBatchOperationResponse rebuildFailedIndexes(Long userId) {
+        if (userId == null || userId <= 0) {
+            throw new BusinessException(ResultCode.INVALID_PARAMETER, "userId 不能为空");
+        }
+
+        log.info("[KB][REBUILD] 开始批量重建失败索引 - userId={}", userId);
+
+        List<KbDocument> failedDocuments = kbDocumentRepository.selectList(
+                new LambdaQueryWrapper<KbDocument>()
+                        .eq(KbDocument::getOwnerUserId, userId)
+                        .eq(KbDocument::getDeleted, 0)
+                        .eq(KbDocument::getEnabled, 1)
+                        .eq(KbDocument::getParseStatus, KbProcessStatus.SUCCESS.name())
+                        .eq(KbDocument::getIndexStatus, KbProcessStatus.FAILED.name())
+                        .gt(KbDocument::getChunkCount, 0)
+                        .orderByAsc(KbDocument::getCreatedAt)
+        );
+
+        if (failedDocuments == null || failedDocuments.isEmpty()) {
+            log.info("[KB][REBUILD] 当前用户无失败索引文档 - userId={}", userId);
+            return KbBatchOperationResponse.builder()
+                    .totalCount(0)
+                    .successCount(0)
+                    .failedCount(0)
+                    .failedDocumentIds(List.of())
+                    .message("当前用户无失败索引文档")
+                    .build();
+        }
+
+        log.info("[KB][REBUILD] 查询到失败索引文档数量={} - userId={}", failedDocuments.size(), userId);
+
+        int successCount = 0;
+        List<Long> failedDocumentIds = new ArrayList<>();
+        for (KbDocument document : failedDocuments) {
+            try {
+                rebuildIndex(userId, document.getId());
+                successCount++;
+            } catch (Exception e) {
+                failedDocumentIds.add(document.getId());
+                log.error("[KB][REBUILD] 文档索引重建失败 - userId={}, documentId={}",
+                        userId, document.getId(), e);
+            }
+        }
+        return KbBatchOperationResponse.builder()
+                .totalCount(failedDocuments.size())
+                .successCount(successCount)
+                .failedCount(failedDocumentIds.size())
+                .failedDocumentIds(failedDocumentIds)
+                .message(failedDocumentIds.isEmpty() ? "失败索引批量重建任务执行成功" : "失败索引批量重建任务部分失败")
+                .build();
+    }
+
     /**
      * 写入文档处理日志。
      *

@@ -18,24 +18,27 @@ import java.util.function.Consumer;
  * @since 2026/3/25
  */
 public interface FunctionCallingService {
+    
     /**
      * 带工具调用的对话
-     * AI会自动判断是否需要调用工具，并执行多轮调用直到获得最终答案
      *
+     * @param userId 当前用户 ID
      * @param messages 对话消息列表
      * @return AI的最终回复结果
      */
-    DeepSeekResult chatWithTools(List<DeepSeekMessage> messages);
+    DeepSeekResult chatWithTools(Long userId, List<DeepSeekMessage> messages);
 
     /**
      * 带工具调用的流式对话
      * 支持流式输出、Function Calling、工具多轮调用，最终返回完整AI回复和Token汇总
      *
+     * @param userId        当前用户 ID
      * @param messages      对话消息列表
      * @param eventConsumer 流式事件消费者
      * @return 最终对话结果及Token统计
      */
     StreamingChatResult streamChatWithTools(
+            Long userId,
             List<DeepSeekMessage> messages,
             Consumer<StreamEvent> eventConsumer
     );
