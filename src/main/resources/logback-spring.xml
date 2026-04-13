@@ -42,6 +42,12 @@
 
     <logger name="org.apache.kafka.clients" level="WARN"/>
     <logger name="org.springframework.kafka" level="WARN"/>
+    
+    <logger name="org.apache.fontbox" level="ERROR"/>
+    <logger name="org.apache.fontbox.ttf" level="ERROR"/>
+    <logger name="org.apache.pdfbox.pdmodel.font" level="ERROR"/>
+    <logger name="org.apache.pdfbox.rendering" level="ERROR"/>
+    <logger name="org.apache.pdfbox.ttf" level="ERROR"/>
 
 
     <root level="INFO">

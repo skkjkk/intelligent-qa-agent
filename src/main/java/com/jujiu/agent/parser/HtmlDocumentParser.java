@@ -9,6 +9,7 @@ import org.springframework.stereotype.Component;
 
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
+import java.util.List;
 
 /**
  * @author 17644
@@ -38,7 +39,17 @@ public class HtmlDocumentParser implements DocumentParser {
     }
 
     @Override
+    public List<String> supportedTypes() {
+        return List.of("html");
+    }
+
+    @Override
     public boolean supports(String fileType) {
         return "html".equalsIgnoreCase(fileType);
+    }
+
+    @Override
+    public int order() {
+        return 100;
     }
 }

@@ -46,7 +46,25 @@ import java.util.List;
 public class DocumentServiceImpl implements DocumentService {
 
     // 支持的文件类型
-    private static final List<String> SUPPORTED_FILE_TYPES = Arrays.asList("txt", "pdf", "docx", "html", "md");
+    private static final List<String> SUPPORTED_FILE_TYPES = Arrays.asList(
+            "txt",
+            "md",
+            "pdf",
+            "doc",
+            "docx",
+            "xls",
+            "xlsx",
+            "ppt",
+            "pptx",
+            "rtf",
+            "xml",
+            "csv",
+            "html",
+            "odt",
+            "ods",
+            "odp",
+            "epub"
+    );
     private final MinioFileService minioFileService;
     private final KbDocumentRepository kbDocumentRepository;
     private final KbDocumentProcessLogRepository kbDocumentProcessLogRepository;

@@ -4,6 +4,8 @@ import com.jujiu.agent.common.exception.BusinessException;
 import com.jujiu.agent.common.result.ResultCode;
 import org.springframework.stereotype.Component;
 
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -12,8 +14,20 @@ import java.util.concurrent.ConcurrentHashMap;
  * 文档解析器工厂。
  *
  * <p>根据文件类型自动路由到对应的 {@link DocumentParser} 实现。
- * 采用自动发现机制：所有实现 {@code DocumentParser} 的 Spring Bean
- * 启动时自动注册，无需修改本类即可支持新格式。
+ * 当前实现支持：
+ * <ul>
+ *     <li>自动发现所有 Spring 管理的解析器</li>
+ *     <li>按文件类型建立解析器映射</li>
+ *     <li>同一文件类型支持多个解析器</li>
+ *     <li>按优先级选择最优解析器</li>
+ * </ul>
+ *
+ * <p>设计目标：
+ * <ul>
+ *     <li>专用解析器优先</li>
+ *     <li>通用兜底解析器作为 fallback</li>
+ *     <li>新增格式时无需修改工厂硬编码逻辑</li>
+ * </ul>
  *
  * @author 17644
  * @version 1.0.0
@@ -21,30 +35,23 @@ import java.util.concurrent.ConcurrentHashMap;
  */
 @Component
 public class DocumentParserFactory {
-
-    private final Map<String, DocumentParser> parserMap = new ConcurrentHashMap<>();
+    /**
+     * 文件类型到解析器列表的映射。
+     */
+    private final Map<String, List<DocumentParser>> parserMap = new ConcurrentHashMap<>();
 
     public DocumentParserFactory(List<DocumentParser> parsers) {
-        parsers.forEach(parser -> {
-                    if (parser.supports("txt")) {
-                        parserMap.put("txt", parser);
-                    }
-                    if (parser.supports("md")) {
-                        parserMap.put("md", parser);
-                    }
-                    if (parser.supports("pdf")) {
-                        parserMap.put("pdf", parser);
-                    }
-                    if (parser.supports("docx")) {
-                        parserMap.put("docx", parser);
-                    }
-                    if (parser.supports("html")) {
-                        parserMap.put("html", parser);
-                    }
-                }
-        );
-       
+        for (DocumentParser parser : parsers) {
+            for (String fileType : parser.supportedTypes()) {
+                String normalizedType = normalizeType(fileType);
+                parserMap.computeIfAbsent(normalizedType,
+                        key -> new ArrayList<>()).add(parser);
+            }
+        }
+        parserMap.values().forEach(parserList ->
+                parserList.sort(Comparator.comparingInt(DocumentParser::order).reversed()));
     }
+    
 
     /**
      * 获取对应文件类型的解析器。
@@ -54,15 +61,21 @@ public class DocumentParserFactory {
      * @throws BusinessException 不支持的文件类型时抛出
      */
     public DocumentParser getParser(String fileType) {
-        // 1. 转小写
-        String type;
-        type = fileType == null ? "" : fileType.toLowerCase();
-        // 2. 从 map 取
-        DocumentParser parser = parserMap.get(type);
-        // 3. 取不到抛 BusinessException
-        if (parser == null) {
+        String normalizedType = normalizeType(fileType);
+        List<DocumentParser> parsers = parserMap.get(normalizedType);
+        if (parsers == null || parsers.isEmpty()) {
             throw new BusinessException(ResultCode.UNSUPPORTED_DOCUMENT_TYPE, "不支持的文档类型：" + fileType);
         }
-        return parser;
+        return parsers.get(0);
+    }
+
+    /**
+     * 标准化文件类型。
+     *
+     * @param fileType 原始文件类型
+     * @return 标准化后的文件类型
+     */
+    private String normalizeType(String fileType) {
+        return fileType == null ? "" : fileType.trim().toLowerCase();
     }
 }

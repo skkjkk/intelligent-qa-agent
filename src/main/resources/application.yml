@@ -3,6 +3,10 @@ spring:
     name: intelligent-qa-agent
   profiles:
     active: dev
+  servlet:
+    multipart:
+      max-file-size: 20MB
+      max-request-size: 20MB
 
 server:
   port: 8080
@@ -45,6 +49,7 @@ knowledge-base:
   # Kafka
   kafka:
     topic-document-process: kb-document-process
+    topic-document-index: kb-document-index
     consumer-concurrency: 1
   chunking:
     default-size: 500

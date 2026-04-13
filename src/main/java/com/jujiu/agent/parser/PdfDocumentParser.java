@@ -9,6 +9,7 @@ import org.apache.pdfbox.text.PDFTextStripper;
 import org.springframework.stereotype.Component;
 
 import java.io.InputStream;
+import java.util.List;
 
 /**
  * @author 17644
@@ -36,7 +37,17 @@ public class PdfDocumentParser implements DocumentParser {
     }
 
     @Override
+    public List<String> supportedTypes() {
+        return List.of("pdf");
+    }
+
+    @Override
     public boolean supports(String fileType) {
         return "pdf".equalsIgnoreCase(fileType);
+    }
+
+    @Override
+    public int order() {
+        return 100;
     }
 }

@@ -1,14 +1,17 @@
 package com.jujiu.agent.mq;
 
 import com.jujiu.agent.common.exception.BusinessException;
+import com.jujiu.agent.common.result.ResultCode;
 import com.jujiu.agent.model.entity.KbDocument;
 import com.jujiu.agent.model.entity.KbDocumentProcessLog;
 import com.jujiu.agent.model.enums.KbDocumentStatus;
 import com.jujiu.agent.model.enums.KbProcessStage;
 import com.jujiu.agent.model.enums.KbProcessStatus;
+import com.jujiu.agent.model.event.DocumentIndexEvent;
 import com.jujiu.agent.model.event.DocumentProcessEvent;
 import com.jujiu.agent.parser.DocumentParser;
 import com.jujiu.agent.parser.DocumentParserFactory;
+import com.jujiu.agent.parser.TikaDocumentParser;
 import com.jujiu.agent.repository.KbDocumentProcessLogRepository;
 import com.jujiu.agent.repository.KbDocumentRepository;
 import com.jujiu.agent.service.kb.ChunkService;
@@ -44,22 +47,28 @@ public class DocumentProcessConsumer {
     private final KbDocumentRepository documentRepository;
     private final KbDocumentProcessLogRepository documentProcessLogRepository;
     private final MinioFileService minioFileService;    
+    private final TikaDocumentParser tikaDocumentParser;
     private final DocumentParserFactory parserFactory;
     private final ChunkService chunkService;
     private final DocumentProcessFailureHandler failureHandler;
-    
+    private final DocumentIndexProducer documentIndexProducer;
+
     public DocumentProcessConsumer(KbDocumentRepository documentRepository,
                                    KbDocumentProcessLogRepository documentProcessLogRepository,
+                                   TikaDocumentParser tikaDocumentParser,
                                    DocumentParserFactory parserFactory,
                                    MinioFileService minioFileService,
                                    DocumentProcessFailureHandler failureHandler,
-                                   ChunkService chunkService) {
+                                   ChunkService chunkService,
+                                   DocumentIndexProducer documentIndexProducer) {
         this.documentRepository = documentRepository;
         this.documentProcessLogRepository = documentProcessLogRepository;
+        this.tikaDocumentParser = tikaDocumentParser;
         this.parserFactory = parserFactory;
         this.minioFileService = minioFileService;
         this.failureHandler = failureHandler;
         this.chunkService = chunkService;
+        this.documentIndexProducer = documentIndexProducer;
     }
 
     /**
@@ -94,7 +103,17 @@ public class DocumentProcessConsumer {
 
             // 下载文件并解析为纯文本
             text = parseDocument(document);
-            
+            String normalizedText = text == null ? "" : text.trim();
+            if (normalizedText.isEmpty()) {
+                throw new BusinessException(ResultCode.FILE_READ_ERROR, "文档解析结果为空");
+            }
+
+            if (normalizedText.length() < 10) {
+                log.warn("[KB][PARSER] 文档文本较短，可能影响检索质量 - documentId={}, fileName={}, textLength={}",
+                        document.getId(), document.getFileName(), normalizedText.length());
+            }
+
+
             // 更新文档状态为成功，设置分块数量统计
             document.setParseStatus(KbProcessStatus.SUCCESS.name());
             document.setUpdatedAt(LocalDateTime.now());
@@ -115,15 +134,43 @@ public class DocumentProcessConsumer {
             documentRepository.updateById(document);
 
             log.info("文档分块完成，documentId={}, chunkCount={}", documentId, chunkCount);
+
+            DocumentIndexEvent indexEvent = buildIndexEvent(documentId, document.getOwnerUserId());
+            documentIndexProducer.send(indexEvent);
+
+            log.info("文档分块完成并已发送索引事件，documentId={}, chunkCount={}", documentId, chunkCount);
+
         } catch (Exception e) {
             log.error("文档分块失败，documentId={}", documentId, e);
             failureHandler.handleFailure(document, KbProcessStage.CHUNK, e);
             throw new RuntimeException("文档分块失败", e);
         }
     }
+    
+    /**
+     * 构建文档索引事件。
+     *
+     * @param documentId 文档 ID
+     * @param userId 用户 ID
+     * @return 文档索引事件
+     */
+    private DocumentIndexEvent buildIndexEvent(Long documentId, Long userId) {
+        return DocumentIndexEvent.builder()
+                .documentId(documentId)
+                .userId(userId)
+                .timestamp(LocalDateTime.now())
+                .retryCount(0)
+                .build();
+    }
 
     /**
      * 解析文档为纯文本。
+     *
+     * <p>当前版本采用：
+     * <ul>
+     *     <li>按文件类型优先使用专用解析器</li>
+     *     <li>专用解析器失败时自动降级到 Tika 通用解析器</li>
+     * </ul>
      *
      * @param document 文档记录
      * @return 纯文本内容
@@ -132,21 +179,60 @@ public class DocumentProcessConsumer {
         // 1. 记录 PARSE PROCESSING 日志
         insertProcessLog(document.getId(), KbProcessStage.PARSE, KbProcessStatus.PROCESSING, "开始解析");
 
-        // 2. 从 MinIO 下载
+        // 2. 从 MinIO 下载并优先使用专用解析器
         try (InputStream inputStream = minioFileService.getObjectStream(document.getFilePath())) {
             DocumentParser parser = parserFactory.getParser(document.getFileType());
-            String text = parser.parse(inputStream, document.getFileName());
 
-            // 3. 记录 PARSE SUCCESS 日志
+            log.info("[KB][PARSER] 使用主解析器解析文档 - documentId={}, fileName={}, fileType={}, parser={}",
+                    document.getId(), document.getFileName(), document.getFileType(), parser.getClass().getSimpleName());
+
+            String text;
+            try {
+                text = parser.parse(inputStream, document.getFileName());
+            } catch (Exception parserException) {
+                log.warn("[KB][PARSER] 主解析器失败，尝试使用 Tika 兜底 - documentId={}, fileName={}, fileType={}, parser={}",
+                        document.getId(), document.getFileName(), document.getFileType(), parser.getClass().getSimpleName(), parserException);
+
+                // 重新打开输入流，避免主解析器已消费流内容
+                try (InputStream fallbackInputStream = minioFileService.getObjectStream(document.getFilePath())) {
+                    text = tikaDocumentParser.parse(fallbackInputStream, document.getFileName());
+                    log.info("[KB][PARSER] Tika 兜底解析成功 - documentId={}, fileName={}, fileType={}",
+                            document.getId(), document.getFileName(), document.getFileType());
+                }
+            }
+
+            String normalizedText = text == null ? "" : text.trim();
+            if (normalizedText.isEmpty()) {
+                log.warn("[KB][PARSER] 文档解析结果为空 - documentId={}, fileName={}",
+                        document.getId(), document.getFileName());
+                insertProcessLog(document.getId(), KbProcessStage.PARSE, KbProcessStatus.FAILED, "文档解析结果为空");
+                throw new BusinessException(ResultCode.FILE_READ_ERROR, "文档解析结果为空");
+            }
+
+            if (normalizedText.length() < 10) {
+                log.warn("[KB][PARSER] 文档文本较短，可能影响检索质量 - documentId={}, fileName={}, textLength={}",
+                        document.getId(), document.getFileName(), normalizedText.length());
+            }
+
+            // 4. 记录 PARSE SUCCESS 日志
             insertProcessLog(document.getId(), KbProcessStage.PARSE, KbProcessStatus.SUCCESS, "解析完成");
-            return text;
+
+            log.info("[KB][PARSER] 文档解析成功 - documentId={}, fileName={}, textLength={}",
+                    document.getId(), document.getFileName(), normalizedText.length());
+
+            return normalizedText;
         } catch (Exception e) {
-            log.error("文档解析失败, documentId={}", document.getId(), e);
+            log.error("[KB][PARSER] 文档解析失败 - documentId={}, fileName={}",
+                    document.getId(), document.getFileName(), e);
+
+            // 5. 记录 PARSE FAILED 日志
             insertProcessLog(document.getId(), KbProcessStage.PARSE, KbProcessStatus.FAILED, e.getMessage());
+
             throw e instanceof BusinessException ? (BusinessException) e : new RuntimeException(e);
         }
     }
-    
+
+
     /**
      * 插入处理日志。
      */

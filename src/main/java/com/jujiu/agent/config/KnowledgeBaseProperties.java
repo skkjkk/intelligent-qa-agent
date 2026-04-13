@@ -104,6 +104,11 @@ public class KnowledgeBaseProperties {
          * 消费者并发数
          */
         private Integer consumerConcurrency = 1;
+
+        /**
+         * 文档索引主题。
+         */
+        private String topicDocumentIndex = "kb-document-index";
     }
     
     @Data

@@ -4,6 +4,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.io.InputStream;
+import java.util.List;
 
 
 /**
@@ -30,7 +31,17 @@ public class MarkdownDocumentParser implements DocumentParser {
     }
 
     @Override
+    public List<String> supportedTypes() {
+        return List.of("md");
+    }
+
+    @Override
     public boolean supports(String fileType) {
         return "md".equalsIgnoreCase(fileType);
+    }
+
+    @Override
+    public int order() {
+        return 100;
     }
 }

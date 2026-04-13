@@ -8,6 +8,7 @@ import org.apache.poi.xwpf.usermodel.XWPFDocument;
 import org.springframework.stereotype.Component;
 
 import java.io.InputStream;
+import java.util.List;
 
 /**
  * @author 17644
@@ -36,7 +37,17 @@ public class DocxDocumentParser implements DocumentParser {
     }
 
     @Override
+    public List<String> supportedTypes() {
+        return List.of("docx");
+    }
+
+    @Override
     public boolean supports(String fileType) {
         return "docx".equalsIgnoreCase(fileType);
+    }
+
+    @Override
+    public int order() {
+        return 100;
     }
 }

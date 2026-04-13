@@ -56,7 +56,7 @@ public class KnowledgeIndexController {
     public Result<KbBatchOperationResponse> indexPendingDocuments() {
         Long userId = getCurrentUserId();
         KbBatchOperationResponse response = documentService.indexPendingDocuments(userId);
-        return Result.success(response, "待处理文档索引任务执行成功");
+        return Result.success(response, response.getMessage());
     }
 
     /**
@@ -83,7 +83,7 @@ public class KnowledgeIndexController {
     public Result<KbBatchOperationResponse> rebuildFailedIndexes() {
         Long userId = getCurrentUserId();
         KbBatchOperationResponse response = documentService.rebuildFailedIndexes(userId);
-        return Result.success(response, "失败索引批量重建任务执行成功");
+        return Result.success(response, response.getMessage());
     }
 
 }
