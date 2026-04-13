@@ -1,13 +1,15 @@
 package com.jujiu.agent.controller;
 
 import com.jujiu.agent.common.result.Result;
+import com.jujiu.agent.model.dto.request.BindDocumentGroupRequest;
+import com.jujiu.agent.model.dto.request.GrantDocumentAclRequest;
 import com.jujiu.agent.model.dto.request.UploadDocumentRequest;
-import com.jujiu.agent.model.dto.response.DocumentProcessStatusResponse;
-import com.jujiu.agent.model.dto.response.KbDocumentResponse;
-import com.jujiu.agent.service.kb.DocumentService;
+import com.jujiu.agent.model.dto.response.*;
+import com.jujiu.agent.service.kb.*;
 import com.jujiu.agent.util.SecurityUtils;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.validation.Valid;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.*;
@@ -31,9 +33,25 @@ import java.util.List;
 public class KnowledgeDocumentController {
 
     private final DocumentService documentService;
+    private final DocumentAclManageService documentAclManageService;
+    private final DocumentGroupService documentGroupService;
+    private final DocumentAclAuditService documentAclAuditService;
+    private final DocumentSharingQueryService documentSharingQueryService;
+    private final DocumentAccessExplainService documentAccessExplainService;
 
-    public KnowledgeDocumentController(DocumentService documentService) {
+    public KnowledgeDocumentController(DocumentService documentService,
+                                       DocumentAclManageService documentAclManageService,
+                                       DocumentGroupService documentGroupService,
+                                       DocumentAclAuditService documentAclAuditService,
+                                       DocumentSharingQueryService documentSharingQueryService,
+                                       DocumentAccessExplainService documentAccessExplainService) {
         this.documentService = documentService;
+        this.documentAclManageService = documentAclManageService;
+        this.documentGroupService = documentGroupService;
+        this.documentAclAuditService = documentAclAuditService;
+        this.documentSharingQueryService = documentSharingQueryService;
+        this.documentAccessExplainService = documentAccessExplainService;
+        
     }
 
     /**
@@ -60,12 +78,14 @@ public class KnowledgeDocumentController {
             @RequestPart("file") MultipartFile file,
             @RequestParam(value = "title", required = false) String title,
             @RequestParam(value = "visibility", required = false) String visibility,
-            @RequestParam(value = "kbId", required = false) Long kbId) {
+            @RequestParam(value = "kbId", required = false) Long kbId,
+            @RequestParam(value = "groupId", required = false) Long groupId) {
 
         UploadDocumentRequest request = new UploadDocumentRequest();
         request.setTitle(title);
         request.setVisibility(visibility);
         request.setKbId(kbId);
+        request.setGroupId(groupId);
 
         Long userId = getCurrentUserId();
         Long documentId = documentService.uploadDocument(userId, file, request);
@@ -125,4 +145,140 @@ public class KnowledgeDocumentController {
         documentService.deleteDocument(userId, documentId);
         return Result.success(null, "文档删除成功");
     }
+
+    /**
+     * 查询文档授权列表。
+     *
+     * @param documentId 文档 ID
+     * @return 文档授权列表
+     */
+    @GetMapping("/{documentId}/acl")
+    @Operation(summary = "查询文档授权列表")
+    public Result<List<KbDocumentAclResponse>> listDocumentAcl(@PathVariable Long documentId) {
+        Long userId = getCurrentUserId();
+        return Result.success(documentAclManageService.listDocumentAcl(userId, documentId));
+    }
+
+    /**
+     * 给文档授权。
+     *
+     * @param documentId 文档 ID
+     * @param request 授权请求
+     * @return 授权结果
+     */
+    @PostMapping("/{documentId}/acl")
+    @Operation(summary = "给文档授权")
+    public Result<Void> grantDocumentAcl(@PathVariable Long documentId,
+                                         @RequestBody @Valid GrantDocumentAclRequest request) {
+        Long userId = getCurrentUserId();
+        documentAclManageService.grantDocumentAcl(userId, documentId, request);
+        return Result.success(null, "文档授权成功");
+    }
+
+    /**
+     * 回收文档授权。
+     *
+     * @param documentId 文档 ID
+     * @param principalType 授权主体类型
+     * @param principalId 授权主体 ID
+     * @param permission 授权权限
+     * @return 授权回收结果
+     */
+    @DeleteMapping("/{documentId}/acl")
+    @Operation(summary = "回收文档授权")
+    public Result<Void> revokeDocumentAcl(@PathVariable Long documentId,
+                                          @RequestParam("principalType") String principalType,
+                                          @RequestParam("principalId") String principalId,
+                                          @RequestParam("permission") String permission) {
+        Long userId = getCurrentUserId();
+        documentAclManageService.revokeDocumentAcl(userId, documentId, principalType, principalId, permission);
+        return Result.success(null, "文档授权回收成功");
+    }
+    
+    /**
+     * 查询文档共享组。
+     *
+     * @param documentId 文档 ID
+     * @return 文档共享组列表
+     */
+    @GetMapping("/{documentId}/groups")
+    @Operation(summary = "查询文档共享组")
+    public Result<List<KbDocumentGroupResponse>> listDocumentGroups(@PathVariable Long documentId) {
+        Long userId = getCurrentUserId();
+        return Result.success(documentGroupService.listDocumentGroups(userId, documentId));
+    }
+
+    /**
+     * 绑定文档共享组。
+     *
+     * @param documentId 文档 ID
+     * @param request 绑定请求
+     * @return 绑定结果
+     */
+    @PostMapping("/{documentId}/groups")
+    @Operation(summary = "绑定文档共享组")
+    public Result<Void> bindDocumentGroup(@PathVariable Long documentId,
+                                          @RequestBody @Valid BindDocumentGroupRequest request) {
+        Long userId = getCurrentUserId();
+        documentGroupService.bindDocumentGroup(userId, documentId, request);
+        return Result.success(null, "文档共享组绑定成功");
+    }
+    
+    /**
+     * 解绑文档共享组。
+     *
+     * @param documentId 文档 ID
+     * @param groupId 组 ID
+     * @return 解绑结果
+     */
+    @DeleteMapping("/{documentId}/groups/{groupId}")
+    @Operation(summary = "解绑文档共享组")
+    public Result<Void> unbindDocumentGroup(@PathVariable Long documentId,
+                                            @PathVariable Long groupId) {
+        Long userId = getCurrentUserId();
+        documentGroupService.unbindDocumentGroup(userId, documentId, groupId);
+        return Result.success(null, "文档共享组解绑成功");
+    }
+
+    /**
+     * 查询文档 ACL 审计日志。
+     *
+     * @param documentId 文档 ID
+     * @param action 操作类型
+     * @return ACL 审计日志列表
+     */
+    @GetMapping("/{documentId}/acl/audit")
+    @Operation(summary = "查询文档 ACL 审计日志")
+    public Result<List<KbDocumentAclAuditLogResponse>> listDocumentAclAuditLogs(
+            @PathVariable Long documentId,
+            @RequestParam(value = "action", required = false) String action) {
+        Long userId = getCurrentUserId();
+        return Result.success(documentAclAuditService.listAuditLogs(userId, documentId, action));
+    }
+    /**
+     * 查询文档共享概览。
+     *
+     * @param documentId 文档 ID
+     * @return 文档共享概览
+     */
+    @GetMapping("/{documentId}/sharing-overview")
+    @Operation(summary = "查询文档共享概览")
+    public Result<KbDocumentSharingOverviewResponse> getSharingOverview(@PathVariable Long documentId) {
+        Long userId = getCurrentUserId();
+        return Result.success(documentSharingQueryService.getSharingOverview(userId, documentId));
+    }
+
+    /**
+     * 解释当前用户对文档的可见性原因。
+     *
+     * @param documentId 文档 ID
+     * @return 访问解释
+     */
+    @GetMapping("/{documentId}/access-explain")
+    @Operation(summary = "解释当前用户对文档的可见性原因")
+    public Result<KbDocumentAccessExplainResponse> explainAccess(@PathVariable Long documentId) {
+        Long userId = getCurrentUserId();
+        return Result.success(documentAccessExplainService.explainAccess(userId, documentId));
+    }
+
 }

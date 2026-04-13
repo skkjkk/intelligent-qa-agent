@@ -12,11 +12,13 @@ import com.jujiu.agent.model.entity.KbDocument;
 import com.jujiu.agent.repository.KbChunkRepository;
 import com.jujiu.agent.repository.KbDocumentRepository;
 import com.jujiu.agent.search.KbChunkIndexDocument;
+import com.jujiu.agent.service.kb.DocumentAclService;
 import com.jujiu.agent.service.kb.EmbeddingService;
 import com.jujiu.agent.service.kb.VectorSearchService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
+import javax.swing.text.Document;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -46,16 +48,19 @@ public class VectorSearchServiceImpl implements VectorSearchService {
     private final KbChunkRepository kbChunkRepository;
     private final ElasticsearchClient elasticsearchClient;
     private final KnowledgeBaseProperties knowledgeBaseProperties;
+    private final DocumentAclService documentAclService;
     public VectorSearchServiceImpl(EmbeddingService embeddingService,
                                    KbDocumentRepository kbDocumentRepository,
                                    KbChunkRepository kbChunkRepository,
                                    ElasticsearchClient elasticsearchClient,
-                                   KnowledgeBaseProperties knowledgeBaseProperties) {
+                                   KnowledgeBaseProperties knowledgeBaseProperties,
+                                   DocumentAclService documentAclService) {
         this.embeddingService = embeddingService;
         this.kbDocumentRepository = kbDocumentRepository;
         this.kbChunkRepository = kbChunkRepository;
         this.elasticsearchClient = elasticsearchClient;
         this.knowledgeBaseProperties = knowledgeBaseProperties;
+        this.documentAclService = documentAclService;
     }
 
 
@@ -82,7 +87,7 @@ public class VectorSearchServiceImpl implements VectorSearchService {
         // 加载可用文档
         List<KbDocument> documents = loadAvailableDocuments(kbId, userId);
         if (documents.isEmpty()) {
-            log.info("[KB][SEARCH] 当前知识库下无可用文档 - kbId={}, userId={}", kbId, userId);
+            log.info("[KB][SEARCH][ACL] 当前用户无可检索文档 - kbId={}, userId={}", kbId, userId);
             return List.of();
         }
         
@@ -94,7 +99,11 @@ public class VectorSearchServiceImpl implements VectorSearchService {
         float[] queryVector = embeddingService.embedQuery(question);
      
         List<ChunkSearchResult> vectorResults = vectorSearch(kbId,userId, question, queryVector, topK, documentIds);
+        vectorResults = filterByDocumentScope(vectorResults, documentIds);
+        
         List<ChunkSearchResult> keywordResults = keywordSearch(kbId, userId, question, topK, documentIds, documents);
+        keywordResults = filterByDocumentScope(keywordResults, documentIds);
+        
         List<ChunkSearchResult> mergedResults = mergeResults(vectorResults, keywordResults, topK);
 
         long latencyMs = System.currentTimeMillis() - startTime;
@@ -205,7 +214,7 @@ public class VectorSearchServiceImpl implements VectorSearchService {
                                                   Integer topK,
                                                   Set<Long> documentIds,
                                                   List<KbDocument> documents) {
-        if (documentIds.isEmpty() || documentIds == null) {
+        if (documentIds == null || documentIds.isEmpty() ) {
             log.info("[KB][SEARCH][KEYWORD] 无可检索文档范围 - kbId={}, userId={}", kbId, userId);
             return List.of();
         }
@@ -295,6 +304,9 @@ public class VectorSearchServiceImpl implements VectorSearchService {
                             ),
                     KbChunkIndexDocument.class
             );
+            
+            log.info("[KB][SEARCH][VECTOR][ACL] 向量检索文档范围已按 ACL 收口 - kbId={}, userId={}, documentCount={}",
+                    kbId, userId, documentIds.size());
 
             List<ChunkSearchResult> results = new ArrayList<>();
             if (response.hits() == null || response.hits().hits().isEmpty()) {
@@ -525,10 +537,16 @@ public class VectorSearchServiceImpl implements VectorSearchService {
      */
     private List<KbDocument> loadAvailableDocuments(Long kbId, Long userId) {
 
+        Set<Long> readableDocumentIds = documentAclService.listReadableDocumentIds(userId, kbId);
+        if (readableDocumentIds == null || readableDocumentIds.isEmpty()) {
+            log.info("[KB][ACL] 当前用户在知识库下无可读文档 - kbId={}, userId={}", kbId, userId);
+            return List.of();
+        }
+        
         return kbDocumentRepository.selectList(
                 new LambdaQueryWrapper<KbDocument>()
                         .eq(KbDocument::getKbId, kbId)
-                        .eq(KbDocument::getOwnerUserId, userId)
+                        .in(KbDocument::getId, readableDocumentIds)
                         .eq(KbDocument::getDeleted, 0)
                         .eq(KbDocument::getEnabled, 1)
                         .eq(KbDocument::getParseStatus, "SUCCESS")
@@ -588,4 +606,12 @@ public class VectorSearchServiceImpl implements VectorSearchService {
         return result;
     }
 
+    private List<ChunkSearchResult> filterByDocumentScope(List<ChunkSearchResult> results, Set<Long> documentIds) {
+        if (results == null || results.isEmpty() || documentIds == null || documentIds.isEmpty()) {
+            return List.of();
+        }
+        return results.stream()
+                .filter(item -> item.getDocumentId() != null && documentIds.contains(item.getDocumentId()))
+                .toList();
+    }
 }

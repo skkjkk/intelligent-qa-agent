@@ -142,10 +142,12 @@ public class KnowledgeBaseTool extends AbstractTool {
      */
     private String buildToolResult(String question, KnowledgeQueryResponse response) {
         Map<String, Object> result = new LinkedHashMap<>();
+        result.put("success", true);
         result.put("question", question);
         result.put("answer", response.getAnswer());
         result.put("citations", buildCitationResult(response.getCitations()));
-        
+        result.put("hasCitations", response.getCitations() != null && !response.getCitations().isEmpty());
+
         try{
             return objectMapper.writeValueAsString(result);
         } catch (Exception e) {

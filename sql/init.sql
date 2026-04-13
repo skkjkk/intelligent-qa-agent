@@ -329,6 +329,75 @@ CREATE TABLE `kb_retrieval_trace` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='检索轨迹表';
 
 -- =============================================
+-- 17. 文档 ACL 审计日志表（kb_document_acl_audit_log）
+-- =============================================
+DROP TABLE IF EXISTS `kb_document_acl_audit_log`;
+CREATE TABLE `kb_document_acl_audit_log` (
+                                             `id` BIGINT PRIMARY KEY AUTO_INCREMENT COMMENT '主键ID',
+                                             `document_id` BIGINT NOT NULL COMMENT '文档ID',
+                                             `operator_user_id` BIGINT NOT NULL COMMENT '操作人用户ID',
+                                             `action` VARCHAR(32) NOT NULL COMMENT '动作：GRANT/REVOKE/ACCESS_DENIED',
+                                             `principal_type` VARCHAR(32) COMMENT '被授权主体类型',
+                                             `principal_id` VARCHAR(64) COMMENT '被授权主体ID',
+                                             `permission` VARCHAR(32) COMMENT '权限：READ/MANAGE/SHARE',
+                                             `reason` VARCHAR(255) COMMENT '原因或补充说明',
+                                             `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+                                             KEY `idx_acl_audit_doc` (`document_id`),
+                                             KEY `idx_acl_audit_operator` (`operator_user_id`),
+                                             KEY `idx_acl_audit_action` (`action`),
+                                             KEY `idx_acl_audit_created_at` (`created_at`),
+                                             CONSTRAINT `fk_acl_audit_document` FOREIGN KEY (`document_id`) REFERENCES `kb_document` (`id`) ON DELETE CASCADE,
+                                             CONSTRAINT `fk_acl_audit_user` FOREIGN KEY (`operator_user_id`) REFERENCES `user` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='文档ACL审计日志表';
+
+-- =============================================
+-- 18. 知识库用户组表（kb_group）
+-- =============================================
+DROP TABLE IF EXISTS `kb_group`;
+CREATE TABLE `kb_group` (
+                            `id` BIGINT PRIMARY KEY AUTO_INCREMENT COMMENT '主键ID',
+                            `name` VARCHAR(100) NOT NULL COMMENT '组名称',
+                            `code` VARCHAR(64) NOT NULL COMMENT '组编码',
+                            `created_by` BIGINT NOT NULL COMMENT '创建人',
+                            `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+                            `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+                            UNIQUE KEY `uk_kb_group_code` (`code`),
+                            KEY `idx_kb_group_created_by` (`created_by`),
+                            CONSTRAINT `fk_kb_group_user` FOREIGN KEY (`created_by`) REFERENCES `user` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='知识库用户组表';
+
+-- =============================================
+-- 19. 知识库用户组成员表（kb_group_member）
+-- =============================================
+DROP TABLE IF EXISTS `kb_group_member`;
+CREATE TABLE `kb_group_member` (
+                                   `id` BIGINT PRIMARY KEY AUTO_INCREMENT COMMENT '主键ID',
+                                   `group_id` BIGINT NOT NULL COMMENT '组ID',
+                                   `user_id` BIGINT NOT NULL COMMENT '用户ID',
+                                   `role` VARCHAR(32) NOT NULL DEFAULT 'MEMBER' COMMENT '成员角色：OWNER/MEMBER',
+                                   `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+                                   UNIQUE KEY `uk_kb_group_member` (`group_id`, `user_id`),
+                                   KEY `idx_kb_group_member_user` (`user_id`),
+                                   CONSTRAINT `fk_kb_group_member_group` FOREIGN KEY (`group_id`) REFERENCES `kb_group` (`id`) ON DELETE CASCADE,
+                                   CONSTRAINT `fk_kb_group_member_user` FOREIGN KEY (`user_id`) REFERENCES `user` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='知识库用户组成员表';
+
+-- =============================================
+-- 20. 文档共享组关联表（kb_document_group）
+-- =============================================
+DROP TABLE IF EXISTS `kb_document_group`;
+CREATE TABLE `kb_document_group` (
+                                     `id` BIGINT PRIMARY KEY AUTO_INCREMENT COMMENT '主键ID',
+                                     `document_id` BIGINT NOT NULL COMMENT '文档ID',
+                                     `group_id` BIGINT NOT NULL COMMENT '组ID',
+                                     `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+                                     UNIQUE KEY `uk_kb_document_group` (`document_id`, `group_id`),
+                                     KEY `idx_kb_document_group_group` (`group_id`),
+                                     CONSTRAINT `fk_kb_document_group_document` FOREIGN KEY (`document_id`) REFERENCES `kb_document` (`id`) ON DELETE CASCADE,
+                                     CONSTRAINT `fk_kb_document_group_group` FOREIGN KEY (`group_id`) REFERENCES `kb_group` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='文档共享组关联表';
+
+-- =============================================
 -- 初始化数据
 -- =============================================
 

@@ -29,5 +29,8 @@ public class UploadDocumentRequest implements Serializable {
     
     /** 关联标签 ID 列表，可选。 */
     private List<Long> tagIds;
-    
+
+    /** 关联分组 ID，可选。 */
+    private Long groupId;
+
 }

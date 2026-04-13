@@ -10,6 +10,7 @@ import com.jujiu.agent.model.dto.response.KbBatchOperationResponse;
 import com.jujiu.agent.model.dto.response.KbDocumentResponse;
 import com.jujiu.agent.model.entity.KbChunk;
 import com.jujiu.agent.model.entity.KbDocument;
+import com.jujiu.agent.model.entity.KbDocumentGroup;
 import com.jujiu.agent.model.entity.KbDocumentProcessLog;
 import com.jujiu.agent.model.enums.KbDocumentStatus;
 import com.jujiu.agent.model.enums.KbProcessStage;
@@ -17,11 +18,10 @@ import com.jujiu.agent.model.enums.KbProcessStatus;
 import com.jujiu.agent.model.event.DocumentProcessEvent;
 import com.jujiu.agent.mq.DocumentProcessProducer;
 import com.jujiu.agent.repository.KbChunkRepository;
+import com.jujiu.agent.repository.KbDocumentGroupRepository;
 import com.jujiu.agent.repository.KbDocumentProcessLogRepository;
 import com.jujiu.agent.repository.KbDocumentRepository;
-import com.jujiu.agent.service.kb.DocumentService;
-import com.jujiu.agent.service.kb.ElasticsearchIndexService;
-import com.jujiu.agent.service.kb.EmbeddingService;
+import com.jujiu.agent.service.kb.*;
 import com.jujiu.agent.storage.MinioFileService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -33,6 +33,7 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Set;
 
 /**
  * 文档服务与去重/入库实现。
@@ -44,8 +45,9 @@ import java.util.List;
 @Service
 @Slf4j
 public class DocumentServiceImpl implements DocumentService {
+    private static final String VISIBILITY_GROUP_SHARED = "GROUP_SHARED";
 
-    // 支持的文件类型
+    /** 支持的文件类型列表。 */
     private static final List<String> SUPPORTED_FILE_TYPES = Arrays.asList(
             "txt",
             "md",
@@ -65,20 +67,50 @@ public class DocumentServiceImpl implements DocumentService {
             "odp",
             "epub"
     );
+    /** MinIO 文件服务。 */
     private final MinioFileService minioFileService;
+    /** 知识库文档仓储。 */
     private final KbDocumentRepository kbDocumentRepository;
+    /** 文档处理日志仓储。 */
     private final KbDocumentProcessLogRepository kbDocumentProcessLogRepository;
+    /** 文档处理事件生产者。 */
     private final DocumentProcessProducer documentProcessProducer;
+    /** 知识库分块仓储。 */
     private final KbChunkRepository kbChunkRepository;
+    /** Elasticsearch 索引服务。 */
     private final ElasticsearchIndexService elasticsearchIndexService;
+    /** 向量嵌入服务。 */
     private final EmbeddingService embeddingService;
-    public DocumentServiceImpl(MinioFileService minioFileService, 
-                               KbDocumentRepository kbDocumentRepository, 
-                               KbDocumentProcessLogRepository kbDocumentProcessLogRepository, 
-                               KbChunkRepository kbChunkRepository, 
-                               ElasticsearchIndexService elasticsearchIndexService, 
+    /** 文档 ACL 服务。 */
+    private final DocumentAclService documentAclService;
+    /** 文档 ACL 审计服务。 */
+    private final DocumentAclAuditService documentAclAuditService;
+    /** 知识库文档组仓储。 */
+    private final KbDocumentGroupRepository kbDocumentGroupRepository;
+
+    /**
+     * 构造方法。
+     *
+     * @param minioFileService              MinIO 文件服务
+     * @param kbDocumentRepository            知识库文档仓储
+     * @param kbDocumentProcessLogRepository  文档处理日志仓储
+     * @param kbChunkRepository               知识库分块仓储
+     * @param elasticsearchIndexService       Elasticsearch 索引服务
+     * @param documentProcessProducer         文档处理事件生产者
+     * @param embeddingService                向量嵌入服务
+     * @param documentAclService              文档 ACL 服务
+     * @param documentAclAuditService         文档 ACL 审计服务
+     */
+    public DocumentServiceImpl(MinioFileService minioFileService,
+                               KbDocumentRepository kbDocumentRepository,
+                               KbDocumentProcessLogRepository kbDocumentProcessLogRepository,
+                               KbChunkRepository kbChunkRepository,
+                               ElasticsearchIndexService elasticsearchIndexService,
                                DocumentProcessProducer documentProcessProducer,
-                               EmbeddingService embeddingService) {
+                               EmbeddingService embeddingService,
+                               DocumentAclService documentAclService,
+                               DocumentAclAuditService documentAclAuditService,
+                               KbDocumentGroupRepository kbDocumentGroupRepository) {
         this.minioFileService = minioFileService;
         this.kbDocumentRepository = kbDocumentRepository;
         this.kbChunkRepository = kbChunkRepository;
@@ -86,6 +118,9 @@ public class DocumentServiceImpl implements DocumentService {
         this.elasticsearchIndexService = elasticsearchIndexService;
         this.documentProcessProducer = documentProcessProducer;
         this.embeddingService = embeddingService;
+        this.documentAclService = documentAclService;
+        this.documentAclAuditService = documentAclAuditService;
+        this.kbDocumentGroupRepository = kbDocumentGroupRepository;
     }
 
 
@@ -124,7 +159,9 @@ public class DocumentServiceImpl implements DocumentService {
         // 构建文档实体并保存到数据库
         KbDocument document = buildDocument(userId, request, file, type, objectName, contentHash, originalFilename);
         kbDocumentRepository.insert(document);
-    
+
+        saveDocumentGroupRelationIfNeed(document, request);
+        
         // 记录上传成功地处理日志
         insertUploadLog(document.getId());
             
@@ -134,6 +171,32 @@ public class DocumentServiceImpl implements DocumentService {
             
         log.info("文档上传成功，documentId={}", document.getId());
         return document.getId();
+    }
+
+    /**
+     * 保存文档组关系
+     * 如果文档的可见性是 GROUP_SHARED，则保存文档组关系。
+     * @param document 文档对象
+     * @param request 上传文档请求对象
+     */
+    private void saveDocumentGroupRelationIfNeed(KbDocument document, UploadDocumentRequest request) {
+        if (document == null || request == null) {
+            return;
+        }
+
+        if (!VISIBILITY_GROUP_SHARED.equalsIgnoreCase(document.getVisibility())) {
+            return;
+        }
+        
+        if (request.getGroupId() == null || request.getGroupId() <= 0) {
+            throw new BusinessException(ResultCode.INVALID_PARAMETER, "GROUP_SHARED 文档必须指定 groupId");
+        }
+
+        KbDocumentGroup relation = new KbDocumentGroup();
+        relation.setDocumentId(document.getId());
+        relation.setGroupId(request.getGroupId());
+        relation.setCreatedAt(LocalDateTime.now());
+        kbDocumentGroupRepository.insert(relation);
     }
 
     /**
@@ -286,28 +349,8 @@ public class DocumentServiceImpl implements DocumentService {
      */
     @Override
     public KbDocumentResponse getDocument(Long userId, Long documentId) {
-        // 根据文档 ID 查询数据库
-        KbDocument document = kbDocumentRepository.selectById(documentId);
-        // 校验文档是否存在且属于当前用户
-        if (document != null && userId.equals(document.getOwnerUserId()) && document.getDeleted() == 0) {
-            // 转换为响应对象返回
-            return KbDocumentResponse.builder()
-                    .id(document.getId())
-                    .title(document.getTitle())
-                    .fileName(document.getFileName())
-                    .fileType(document.getFileType())
-                    .fileSize(document.getFileSize())
-                    .status(document.getStatus())
-                    .parseStatus(document.getParseStatus())
-                    .indexStatus(document.getIndexStatus())
-                    .chunkCount(document.getChunkCount())
-                    .visibility(document.getVisibility())
-                    .createdAt(document.getCreatedAt())
-                    .build();
-        } else {
-            log.warn("文档不存在或无权访问，documentId={}, userId={}", documentId, userId);
-            throw new BusinessException(ResultCode.DOCUMENT_NOT_FOUND, "文档不存在");
-        }
+        KbDocument document = requireReadableDocument(userId, documentId);
+        return toResponse(document);
     }
 
     /**
@@ -326,12 +369,16 @@ public class DocumentServiceImpl implements DocumentService {
         if (userId == null) {
             throw new BusinessException(ResultCode.INVALID_PARAMETER, "用户 ID 不能为空");
         }
-            
-        log.info("查询文档列表，userId={}, kbId={}", userId, kbId);
-            
+
+        log.info("[KB][ACL] 查询当前用户可读文档列表 - userId={}, kbId={}", userId, kbId);
+
+        Set<Long> readableDocumentIds = documentAclService.listReadableDocumentIds(userId, kbId);
+        if (readableDocumentIds == null || readableDocumentIds.isEmpty()) {
+            return List.of();
+        }
         // 构建查询条件
         LambdaQueryWrapper<KbDocument> wrapper = new LambdaQueryWrapper<KbDocument>()
-                .eq(KbDocument::getOwnerUserId, userId)
+                .in(KbDocument::getId, readableDocumentIds)
                 .eq(KbDocument::getDeleted, 0)
                 .orderByDesc(KbDocument::getCreatedAt);
             
@@ -345,21 +392,8 @@ public class DocumentServiceImpl implements DocumentService {
             
         log.info("查询文档列表结果，userId={}, kbId={}, count={}", userId, kbId, documents.size());
             
-        // 转换为响应对象并返回（空列表时直接返回，不抛异常）
         return documents.stream()
-                .map(document -> KbDocumentResponse.builder()
-                        .id(document.getId())
-                        .title(document.getTitle())
-                        .fileName(document.getFileName())
-                        .fileType(document.getFileType())
-                        .fileSize(document.getFileSize())
-                        .status(document.getStatus())
-                        .parseStatus(document.getParseStatus())
-                        .indexStatus(document.getIndexStatus())
-                        .chunkCount(document.getChunkCount())
-                        .visibility(document.getVisibility())
-                        .createdAt(document.getCreatedAt())
-                        .build())
+                .map(this::toResponse)
                 .toList();
     }
 
@@ -373,18 +407,21 @@ public class DocumentServiceImpl implements DocumentService {
      * @param documentId 需要删除的文档 ID
      * @throws BusinessException 当文档不存在、无权访问或已被删除时抛出
      */
+    /**
+     * 删除文档。
+     * 执行逻辑删除操作，将文档标记为已删除并更新时间戳。
+     * 删除前会校验文档是否存在以及当前用户是否具备管理权限。
+     *
+     * @param userId     当前登录用户 ID，用于权限校验
+     * @param documentId 需要删除的文档 ID
+     * @throws BusinessException 当文档不存在或无管理权限时抛出
+     */
     @Transactional
     @Override
     public void deleteDocument(Long userId, Long documentId) {
-        // 根据文档 ID 查询数据库
-        KbDocument document = kbDocumentRepository.selectById(documentId);
-    
-        // 校验文档是否存在、属于当前用户且未被删除
-        if (document == null || !userId.equals(document.getOwnerUserId()) || document.getDeleted() == 1) {
-            throw new BusinessException(ResultCode.DOCUMENT_NOT_FOUND, "文档不存在");
-        }
-        
-        // 逻辑删除文档，标记为已删除并更新时间戳
+        // 1. 校验当前用户是否具备该文档的管理权限
+        KbDocument document = requireManageableDocument(userId, documentId);
+        // 2. 逻辑删除文档，标记为已删除并更新时间戳
         document.setDeleted(1);
         document.setUpdatedAt(LocalDateTime.now());
         kbDocumentRepository.updateById(document);
@@ -400,15 +437,20 @@ public class DocumentServiceImpl implements DocumentService {
      * @return DocumentProcessStatusResponse 文档处理状态响应对象，包含各阶段状态和分块数量
      * @throws BusinessException 当文档不存在、无权访问或已被删除时抛出
      */
+    /**
+     * 获取文档处理状态。
+     * 查询文档的当前处理状态，包括上传、解析、索引等各个阶段的进度信息。
+     *
+     * @param userId     当前登录用户 ID，用于权限校验
+     * @param documentId 需要查询状态的文档 ID
+     * @return 文档处理状态响应对象，包含各阶段状态和分块数量
+     * @throws BusinessException 当文档不存在或无读取权限时抛出
+     */
     @Override
     public DocumentProcessStatusResponse getDocumentStatus(Long userId, Long documentId) {
-        // 根据文档 ID 查询数据库
-        KbDocument document = kbDocumentRepository.selectById(documentId);
-        // 校验文档是否存在、属于当前用户且未被删除
-        if (document == null || !userId.equals(document.getOwnerUserId()) || document.getDeleted() == 1) {
-            throw new BusinessException(ResultCode.DOCUMENT_NOT_FOUND, "文档不存在");
-        }
-        // 构建并返回处理状态响应对象
+        // 1. 校验当前用户是否具备该文档的读取权限
+        KbDocument document = requireReadableDocument(userId, documentId);
+        // 2. 构建并返回处理状态响应对象
         return DocumentProcessStatusResponse.builder()
                 .documentId(document.getId())
                 .status(document.getStatus())
@@ -434,30 +476,34 @@ public class DocumentServiceImpl implements DocumentService {
      */
     @Override
     public KbBatchOperationResponse indexPendingDocuments(Long userId) {
+        // 1. 参数校验
         if (userId == null || userId <= 0) {
             throw new BusinessException(ResultCode.INVALID_PARAMETER, "userId 不能为空");
         }
 
-        log.info("[KB][INDEX] 开始批量索引待处理文档 - userId={}", userId);
-        
-        List<KbDocument> pendingDocuments = kbDocumentRepository.selectList(
+        log.info("[KB][INDEX][ACL] 开始批量索引可管理文档 - userId={}", userId);
+
+        // 2. 查询待索引的候选文档列表（解析成功且索引状态为 PENDING 或 FAILED）
+        List<KbDocument> candidateDocuments = kbDocumentRepository.selectList(
                 new LambdaQueryWrapper<KbDocument>()
                         .eq(KbDocument::getDeleted, 0)
                         .eq(KbDocument::getEnabled, 1)
                         .eq(KbDocument::getParseStatus, KbProcessStatus.SUCCESS.name())
-                        .eq(KbDocument::getOwnerUserId, userId)
                         .gt(KbDocument::getChunkCount, 0)
                         .and(wrapper -> wrapper
                                 .eq(KbDocument::getIndexStatus, KbProcessStatus.PENDING.name())
                                 .or()
                                 .eq(KbDocument::getIndexStatus, KbProcessStatus.FAILED.name()))
-
                         .orderByAsc(KbDocument::getCreatedAt)
-
         );
 
-        if (pendingDocuments == null || pendingDocuments.isEmpty()) {
-            log.info("[KB][INDEX] 没有待索引文档 - userId={}", userId);
+        // 3. 过滤出当前用户具备管理权限的文档
+        List<KbDocument> pendingDocuments = filterManageableDocuments(userId, candidateDocuments, "INDEX_PENDING");
+
+        // 4. 若无可管理文档，直接返回空结果
+        if (pendingDocuments.isEmpty()) {
+            log.info("[KB][INDEX][ACL] 没有当前用户可管理的待索引文档 - userId={}, candidateCount={}",
+                    userId, candidateDocuments == null ? 0 : candidateDocuments.size());
             return KbBatchOperationResponse.builder()
                     .totalCount(0)
                     .successCount(0)
@@ -467,20 +513,25 @@ public class DocumentServiceImpl implements DocumentService {
                     .build();
         }
 
-        log.info("[KB][INDEX] 查询到待索引文档数量={} - userId={}", pendingDocuments.size(), userId);
-        
+        log.info("[KB][INDEX][ACL] 查询到当前用户可管理的待索引文档数量={} - userId={}",
+                pendingDocuments.size(), userId);
+
+        // 5. 逐个执行索引，统计成功与失败数量
         int successCount = 0;
         List<Long> failedDocumentIds = new ArrayList<>();
-        
+
         for (KbDocument document : pendingDocuments) {
             try {
                 indexDocument(userId, document.getId());
                 successCount++;
             } catch (Exception e) {
                 failedDocumentIds.add(document.getId());
-                log.error("[KB][INDEX] 文档索引失败 - userId={}, documentId={}", userId, document.getId(), e);
+                log.error("[KB][INDEX][ACL] 文档索引失败 - userId={}, documentId={}",
+                        userId, document.getId(), e);
             }
         }
+
+        // 6. 构建批量操作响应结果
         return KbBatchOperationResponse.builder()
                 .totalCount(pendingDocuments.size())
                 .successCount(successCount)
@@ -489,6 +540,7 @@ public class DocumentServiceImpl implements DocumentService {
                 .message(failedDocumentIds.isEmpty() ? "待处理文档索引任务执行成功" : "待处理文档索引任务部分失败")
                 .build();
     }
+
 
     /**
      * 索引单个文档。
@@ -517,15 +569,8 @@ public class DocumentServiceImpl implements DocumentService {
 
         log.info("[KB][INDEX] 开始索引文档 - userId={}, documentId={}", userId, documentId);
 
-        KbDocument document = kbDocumentRepository.selectById(documentId);
-        if (document == null || document.getDeleted() == 1) {
-            throw new BusinessException(ResultCode.DOCUMENT_NOT_FOUND, "文档不存在");
-        }
-        
-        if (!userId.equals(document.getOwnerUserId())) {
-            throw new BusinessException(ResultCode.DOCUMENT_NOT_FOUND, "文档不存在");
-        }
-        
+        KbDocument document = requireManageableDocument(userId, documentId);
+
         if (document.getEnabled() == null || document.getEnabled() != 1) {
             throw new BusinessException(ResultCode.INVALID_PARAMETER, "文档已禁用，无法索引");
         }
@@ -626,15 +671,7 @@ public class DocumentServiceImpl implements DocumentService {
      * @return 文档实体
      */
     private KbDocument validateDocumentForRebuild(Long userId, Long documentId) {
-        KbDocument document = kbDocumentRepository.selectById(documentId);
-        
-        if (document == null || document.getDeleted() == 1) {
-            throw new BusinessException(ResultCode.DOCUMENT_NOT_FOUND, "文档不存在");
-        }
-
-        if (!userId.equals(document.getOwnerUserId())) {
-            throw new BusinessException(ResultCode.DOCUMENT_NOT_FOUND, "文档不存在");
-        }
+        KbDocument document = requireManageableDocument(userId, documentId);
 
         if (document.getEnabled() == null || document.getEnabled() != 1) {
             throw new BusinessException(ResultCode.INVALID_PARAMETER, "文档已禁用，无法重建索引");
@@ -677,19 +714,22 @@ public class DocumentServiceImpl implements DocumentService {
      */
     @Override
     public void rebuildIndex(Long userId, Long documentId) {
+        // 1. 参数校验
         if (userId == null || userId <= 0) {
             throw new BusinessException(ResultCode.INVALID_PARAMETER, "userId 不能为空");
         }
         if (documentId == null || documentId <= 0) {
             throw new BusinessException(ResultCode.INVALID_PARAMETER, "documentId 不能为空");
         }
-        
+
+        // 2. 校验文档是否满足重建索引条件
         KbDocument document = validateDocumentForRebuild(userId, documentId);
-        
+
         log.info("[KB][REBUILD] 开始重建文档索引 - userId={}, documentId={}", userId, documentId);
         log.info("[KB][REBUILD] 文档已通过重建前置校验，准备删除旧索引 - userId={}, documentId={}, chunkCount={}",
                 userId, documentId, document.getChunkCount());
-        
+
+        // 3. 尝试删除 Elasticsearch 中的旧索引数据
         try {
             elasticsearchIndexService.deleteByDocumentId(documentId);
             log.info("[KB][REBUILD] 已删除旧索引数据 - userId={}, documentId={}", userId, documentId);
@@ -697,7 +737,8 @@ public class DocumentServiceImpl implements DocumentService {
             log.warn("[KB][REBUILD] 删除旧索引数据失败，继续尝试重建 - userId={}, documentId={}",
                     userId, documentId, e);
         }
-        
+
+        // 4. 重新执行文档索引流程
         indexDocument(userId, documentId);
 
         log.info("[KB][REBUILD] 文档索引重建完成 - userId={}, documentId={}", userId, documentId);
@@ -710,15 +751,16 @@ public class DocumentServiceImpl implements DocumentService {
      */
     @Override
     public KbBatchOperationResponse rebuildFailedIndexes(Long userId) {
+        // 1. 参数校验
         if (userId == null || userId <= 0) {
             throw new BusinessException(ResultCode.INVALID_PARAMETER, "userId 不能为空");
         }
 
-        log.info("[KB][REBUILD] 开始批量重建失败索引 - userId={}", userId);
+        log.info("[KB][REBUILD][ACL] 开始批量重建可管理失败索引文档 - userId={}", userId);
 
-        List<KbDocument> failedDocuments = kbDocumentRepository.selectList(
+        // 2. 查询索引失败的候选文档列表
+        List<KbDocument> candidateDocuments = kbDocumentRepository.selectList(
                 new LambdaQueryWrapper<KbDocument>()
-                        .eq(KbDocument::getOwnerUserId, userId)
                         .eq(KbDocument::getDeleted, 0)
                         .eq(KbDocument::getEnabled, 1)
                         .eq(KbDocument::getParseStatus, KbProcessStatus.SUCCESS.name())
@@ -727,8 +769,13 @@ public class DocumentServiceImpl implements DocumentService {
                         .orderByAsc(KbDocument::getCreatedAt)
         );
 
-        if (failedDocuments == null || failedDocuments.isEmpty()) {
-            log.info("[KB][REBUILD] 当前用户无失败索引文档 - userId={}", userId);
+        // 3. 过滤出当前用户具备管理权限的文档
+        List<KbDocument> failedDocuments = filterManageableDocuments(userId, candidateDocuments, "REBUILD_FAILED");
+
+        // 4. 若无可管理文档，直接返回空结果
+        if (failedDocuments.isEmpty()) {
+            log.info("[KB][REBUILD][ACL] 当前用户无可管理的失败索引文档 - userId={}, candidateCount={}",
+                    userId, candidateDocuments == null ? 0 : candidateDocuments.size());
             return KbBatchOperationResponse.builder()
                     .totalCount(0)
                     .successCount(0)
@@ -738,20 +785,25 @@ public class DocumentServiceImpl implements DocumentService {
                     .build();
         }
 
-        log.info("[KB][REBUILD] 查询到失败索引文档数量={} - userId={}", failedDocuments.size(), userId);
+        log.info("[KB][REBUILD][ACL] 查询到当前用户可管理的失败索引文档数量={} - userId={}",
+                failedDocuments.size(), userId);
 
+        // 5. 逐个执行重建索引，统计成功与失败数量
         int successCount = 0;
         List<Long> failedDocumentIds = new ArrayList<>();
+
         for (KbDocument document : failedDocuments) {
             try {
                 rebuildIndex(userId, document.getId());
                 successCount++;
             } catch (Exception e) {
                 failedDocumentIds.add(document.getId());
-                log.error("[KB][REBUILD] 文档索引重建失败 - userId={}, documentId={}",
+                log.error("[KB][REBUILD][ACL] 文档索引重建失败 - userId={}, documentId={}",
                         userId, document.getId(), e);
             }
         }
+
+        // 6. 构建批量操作响应结果
         return KbBatchOperationResponse.builder()
                 .totalCount(failedDocuments.size())
                 .successCount(successCount)
@@ -761,6 +813,7 @@ public class DocumentServiceImpl implements DocumentService {
                 .build();
     }
 
+
     /**
      * 写入文档处理日志。
      *
@@ -769,11 +822,11 @@ public class DocumentServiceImpl implements DocumentService {
      * @param status 处理状态
      * @param message 日志说明
      */
-    private void insertProcessLog(Long documentId, 
-                                  KbProcessStage stage, 
-                                  KbProcessStatus status, 
+    private void insertProcessLog(Long documentId,
+                                  KbProcessStage stage,
+                                  KbProcessStatus status,
                                   String message) {
-
+        // 1. 构建文档处理日志实体
         KbDocumentProcessLog processLog = KbDocumentProcessLog.builder()
                 .documentId(documentId)
                 .stage(stage.name())
@@ -785,6 +838,7 @@ public class DocumentServiceImpl implements DocumentService {
                 .createdAt(LocalDateTime.now())
                 .build();
 
+        // 2. 持久化到数据库
         kbDocumentProcessLogRepository.insert(processLog);
     }
 
@@ -795,9 +849,11 @@ public class DocumentServiceImpl implements DocumentService {
      * @return 小写后缀，如 txt、pdf
      */
     private String extractFileType(String filename) {
+        // 若文件名不存在或不包含扩展名分隔符，返回空字符串
         if (filename == null || !filename.contains(".")) {
             return "";
         }
+        // 提取最后一个点号之后的后缀并转为小写
         return filename.substring(filename.lastIndexOf(".") + 1).toLowerCase();
     }
 
@@ -811,9 +867,117 @@ public class DocumentServiceImpl implements DocumentService {
      */
     private String computeContentHash(byte[] fileBytes) {
         try {
+            // 使用 MD5 算法计算文件内容的十六进制哈希值
             return DigestUtil.md5Hex(fileBytes);
         } catch (Exception e) {
             throw new BusinessException(ResultCode.FILE_HASH_ERROR, "文件哈希计算失败: " + e.getMessage());
         }
     }
+
+    /**
+     * 根据文档 ID 查询文档，校验文档是否存在且未删除。
+     *
+     * @param documentId 文档 ID
+     * @return 知识库文档实体
+     * @throws BusinessException 文档不存在或已删除时抛出
+     */
+    private KbDocument requireExistingDocument(Long documentId) {
+        // 根据文档 ID 查询文档信息
+        KbDocument document = kbDocumentRepository.selectById(documentId);
+        // 校验文档是否存在且未被删除
+        if (document == null || document.getDeleted() == 1) {
+            throw new BusinessException(ResultCode.DOCUMENT_NOT_FOUND, "文档不存在");
+        }
+        return document;
+    }
+
+    /**
+     * 获取文档并校验当前用户是否具备读取权限。
+     *
+     * @param userId     当前用户 ID
+     * @param documentId 文档 ID
+     * @return 知识库文档实体
+     * @throws BusinessException 文档不存在或无读取权限时抛出
+     */
+    private KbDocument requireReadableDocument(Long userId, Long documentId) {
+        // 1. 查询文档并校验存在性
+        KbDocument document = requireExistingDocument(documentId);
+        // 2. 校验当前用户是否具备读取权限
+        if (!documentAclService.canRead(userId, document)) {
+            log.warn("[KB][ACL] 文档无读取权限 - userId={}, documentId={}", userId, documentId);
+            documentAclAuditService.logAccessDenied(documentId, userId, "NO_READ_PERMISSION");
+            throw new BusinessException(ResultCode.DOCUMENT_NOT_FOUND, "文档不存在");
+        }
+        return document;
+    }
+
+    /**
+     * 获取文档并校验当前用户是否具备管理权限。
+     *
+     * @param userId     当前用户 ID
+     * @param documentId 文档 ID
+     * @return 知识库文档实体
+     * @throws BusinessException 文档不存在或无管理权限时抛出
+     */
+    private KbDocument requireManageableDocument(Long userId, Long documentId) {
+        // 1. 查询文档并校验存在性
+        KbDocument document = requireExistingDocument(documentId);
+        // 2. 校验当前用户是否具备管理权限
+        if (!documentAclService.canManage(userId, document)) {
+            log.warn("[KB][ACL] 文档无管理权限 - userId={}, documentId={}", userId, documentId);
+            documentAclAuditService.logAccessDenied(documentId, userId, "NO_MANAGE_PERMISSION");
+            throw new BusinessException(ResultCode.DOCUMENT_NOT_FOUND, "文档不存在");
+        }
+        return document;
+    }
+
+    /**
+     * 从文档列表中过滤出当前用户具备管理权限的文档。
+     *
+     * @param userId    当前用户 ID
+     * @param documents 候选文档列表
+     * @param scene     场景标识，用于日志记录
+     * @return 当前用户可管理的文档列表
+     */
+    private List<KbDocument> filterManageableDocuments(Long userId,
+                                                       List<KbDocument> documents,
+                                                       String scene) {
+        // 1. 若候选列表为空，直接返回空列表
+        if (documents == null || documents.isEmpty()) {
+            return List.of();
+        }
+
+        // 2. 使用 ACL 服务过滤出具备管理权限的文档
+        List<KbDocument> manageableDocuments = documents.stream()
+                .filter(document -> documentAclService.canManage(userId, document))
+                .toList();
+
+        log.info("[KB][ACL] 批量文档管理权限过滤完成 - scene={}, userId={}, candidateCount={}, manageableCount={}",
+                scene, userId, documents.size(), manageableDocuments.size());
+
+        return manageableDocuments;
+    }
+
+    /**
+     * 将文档实体转换为响应对象。
+     *
+     * @param document 知识库文档实体
+     * @return 文档响应对象
+     */
+    private KbDocumentResponse toResponse(KbDocument document) {
+        return KbDocumentResponse.builder()
+                .id(document.getId())
+                .title(document.getTitle())
+                .fileName(document.getFileName())
+                .fileType(document.getFileType())
+                .fileSize(document.getFileSize())
+                .status(document.getStatus())
+                .parseStatus(document.getParseStatus())
+                .indexStatus(document.getIndexStatus())
+                .chunkCount(document.getChunkCount())
+                .visibility(document.getVisibility())
+                .createdAt(document.getCreatedAt())
+                .build();
+    }
+
 }

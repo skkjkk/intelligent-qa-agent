@@ -45,10 +45,17 @@ import java.util.Map;
 @Service
 @Slf4j
 public class ElasticsearchIndexServiceImpl implements ElasticsearchIndexService {
-    
+    /** 知识库配置属性。 */
     private final KnowledgeBaseProperties knowledgeBaseProperties;
+    /** Elasticsearch 客户端。 */
     private final ElasticsearchClient elasticsearchClient;
     
+    /**
+     * 构造方法。
+     *
+     * @param knowledgeBaseProperties 知识库配置属性
+     * @param elasticsearchClient     Elasticsearch 客户端
+     */
     public ElasticsearchIndexServiceImpl(KnowledgeBaseProperties knowledgeBaseProperties, ElasticsearchClient elasticsearchClient) {
         this.knowledgeBaseProperties = knowledgeBaseProperties;
         this.elasticsearchClient = elasticsearchClient;
@@ -59,23 +66,24 @@ public class ElasticsearchIndexServiceImpl implements ElasticsearchIndexService 
      */
     @Override
     public void ensureIndexExists() {
-        // 获取知识库分块索引名称
+        // 1. 获取知识库分块索引名称
         String indexName = getIndexName();
 
         log.info("[KB][ES] 确保索引存在 - indexName={}", indexName);
         try {
+            // 2. 检查索引是否已存在
             boolean exists = elasticsearchClient
                     .indices()
                     .exists(request -> request.index(indexName))
                     .value();
             
-            // 如果索引已存在，则返回
+            // 3. 如果索引已存在，则直接返回
             if (exists) {
                 log.info("[KB][ES] 索引已存在，indexName={}", indexName);
                 return;
             }
 
-            // 索引不存在，则创建索引
+            // 4. 索引不存在，构建字段映射并创建索引
             log.info("[KB][ES] 索引不存在，创建索引，indexName={}", indexName);
             Map<String, Property> properties = buildIndexProperties();
             elasticsearchClient
@@ -103,12 +111,17 @@ public class ElasticsearchIndexServiceImpl implements ElasticsearchIndexService 
      */
     @Override
     public void indexChunk(KbDocument document, KbChunk chunk, float[] vector) {
+        // 1. 校验写入参数是否合法
         validateIndexChunk(document, chunk, vector);
         
+        // 2. 确保目标索引已创建
         ensureIndexExists();
+        
+        // 3. 获取索引名称并构建 ES 文档 ID
         String indexName = getIndexName();
         String documentId = buildEsDocumentId(chunk.getId());
 
+        // 4. 构建索引文档对象
         KbChunkIndexDocument indexDocument = KbChunkIndexDocument.builder()
                 .chunkId(chunk.getId())
                 .documentId(document.getId())
@@ -125,6 +138,7 @@ public class ElasticsearchIndexServiceImpl implements ElasticsearchIndexService 
                 .build();
 
         try {
+            // 5. 调用 Elasticsearch 客户端写入索引文档
             elasticsearchClient
                     .index(request -> request
                             .index(indexName)
@@ -148,11 +162,15 @@ public class ElasticsearchIndexServiceImpl implements ElasticsearchIndexService 
      * @return 向量列表
      */
     private List<Float> convertVector(float[] vector) {
+        // 1. 初始化结果列表
         List<Float> result = new ArrayList<>();
+        
+        // 2. 若向量为空，直接返回空列表
         if (vector == null) {
             return result;
         }
         
+        // 3. 将 float 数组逐个转换为 Float 列表
         for (float value : vector) {
             result.add(value);
         }
@@ -166,12 +184,16 @@ public class ElasticsearchIndexServiceImpl implements ElasticsearchIndexService 
      */
     @Override
     public void deleteByDocumentId(Long documentId) {
+        // 1. 参数校验
         if (documentId == null) {
             throw new BusinessException(ResultCode.INVALID_PARAMETER, "documentId 不能为空");
         }
+        
+        // 2. 获取索引名称
         String indexName = getIndexName();
 
         try {
+            // 3. 构造 term 查询并按 documentId 删除匹配的索引文档
             elasticsearchClient.deleteByQuery(request -> request
                     .index(indexName)
                     .query(query -> query
@@ -194,22 +216,32 @@ public class ElasticsearchIndexServiceImpl implements ElasticsearchIndexService 
      * @return 索引字段映射
      */
     private Map<String, Property> buildIndexProperties() {
+        // 1. 初始化字段映射容器
         Map<String, Property> properties = new HashMap<>();
         
+        // 2. 注册基础 ID 与关系字段
         properties.put("chunkId", Property.of(p -> p.long_(l -> l)));
         properties.put("documentId", Property.of(p -> p.long_(l -> l)));
         properties.put("kbId", Property.of(p -> p.long_(l -> l)));
+        
+        // 3. 注册文本检索字段
         properties.put("title", Property.of(p -> p.text(t -> t)));
         properties.put("content", Property.of(p -> p.text(t -> t)));
         properties.put("sectionTitle", Property.of(p -> p.text(t -> t)));
+        
+        // 4. 注册标签与权限字段
         properties.put("tags", Property.of(p -> p.keyword(k -> k)));
         properties.put("ownerUserId", Property.of(p -> p.long_(l -> l)));
         properties.put("visibility", Property.of(p -> p.keyword(k -> k)));
         properties.put("enabled", Property.of(p -> p.boolean_(b -> b)));
+        
+        // 5. 注册稠密向量字段，用于语义检索
         properties.put("vector", Property.of(p -> p.denseVector(v -> v
                 .dims(getVectorDimension())
                 .index(true)
                 .similarity("cosine"))));
+        
+        // 6. 注册时间字段
         properties.put("createdAt", Property.of(p -> p.date(d -> d)));
         
         return properties;
@@ -221,7 +253,10 @@ public class ElasticsearchIndexServiceImpl implements ElasticsearchIndexService 
      * @return 向量维度
      */
     private Integer getVectorDimension() {
+        // 1. 从配置中读取向量维度
         Integer dimension = knowledgeBaseProperties.getEmbedding().getDimension();
+        
+        // 2. 若配置非法，返回默认维度 2048
         return (dimension == null || dimension <= 0) ? 2048 : dimension;
     }
 
@@ -233,30 +268,37 @@ public class ElasticsearchIndexServiceImpl implements ElasticsearchIndexService 
      * @param vector 分块向量
      */
     private void validateIndexChunk(KbDocument document, KbChunk chunk, float[] vector) {
+        // 1. 校验文档对象不为空
         if (document == null) {
             throw new BusinessException(ResultCode.INVALID_PARAMETER, "document 不能为空");
         }
 
+        // 2. 校验分块对象不为空
         if (chunk == null) {
             throw new BusinessException(ResultCode.INVALID_PARAMETER, "chunk 不能为空");
         }
 
+        // 3. 校验向量数组不为空且长度大于 0
         if (vector == null || vector.length == 0) {
             throw new BusinessException(ResultCode.INVALID_PARAMETER, "vector 不能为空");
         }
         
+        // 4. 校验文档 ID 不为空
         if (document.getId() == null) {
             throw new BusinessException(ResultCode.INVALID_PARAMETER, "documentId 不能为空");
         }
         
+        // 5. 校验分块 ID 不为空
         if (chunk.getId() == null) {
             throw new BusinessException(ResultCode.INVALID_PARAMETER, "chunkId 不能为空");
         }
         
+        // 6. 校验分块内容不为空
         if (chunk.getContent() == null || chunk.getContent().isBlank()) {
             throw new BusinessException(ResultCode.INVALID_PARAMETER, "chunk content 不能为空");
         }
 
+        // 7. 校验向量维度是否与配置一致（不一致时仅记录警告，不阻断写入）
         Integer expectedDimension = getVectorDimension();
         if (vector.length != expectedDimension) {
             log.warn("[KB][ES] 向量维度与配置不一致 - chunkId={}, expectedDimension={}, actualDimension={}",
@@ -270,7 +312,10 @@ public class ElasticsearchIndexServiceImpl implements ElasticsearchIndexService 
      * @return 索引名称
      */
     private String getIndexName() {
+        // 1. 从配置中读取索引名称
         String indexName = knowledgeBaseProperties.getElasticsearch().getIndexName();
+        
+        // 2. 若配置为空，返回默认索引名 kb_chunks_v1
         return (indexName == null || indexName.isBlank()) ? "kb_chunks_v1" : indexName;
     }
 
@@ -281,6 +326,7 @@ public class ElasticsearchIndexServiceImpl implements ElasticsearchIndexService 
      * @return ES 文档 ID
      */
     private String buildEsDocumentId(Long chunkId) {
+        // 使用固定前缀拼接分块 ID，确保 ES 文档 ID 的唯一性和可读性
         return "chunk_" + chunkId;
     }
 }

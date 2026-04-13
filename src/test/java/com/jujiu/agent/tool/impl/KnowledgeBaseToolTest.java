@@ -146,4 +146,34 @@ public class KnowledgeBaseToolTest {
                 .latencyMs(1200L)
                 .build();
     }
+
+    @Test
+    @DisplayName("ACL 过滤后无引用时也应返回 success=true")
+    void shouldReturnSuccessWhenQueryHasNoCitations() throws Exception {
+        Map<String, Object> params = new HashMap<>();
+        params.put("question", "没有权限看到的知识会怎样");
+        params.put("knowledgeBaseId", 1);
+        params.put("topK", 5);
+
+        when(ragService.query(eq(1001L), any(QueryKnowledgeBaseRequest.class)))
+                .thenReturn(KnowledgeQueryResponse.builder()
+                        .answer("抱歉，知识库中没有足够信息支持回答该问题。")
+                        .citations(List.of())
+                        .promptTokens(0)
+                        .completionTokens(0)
+                        .totalTokens(0)
+                        .latencyMs(100L)
+                        .build());
+
+        String result = knowledgeBaseTool.execute(params);
+
+        JsonNode jsonNode = objectMapper.readTree(result);
+        assertTrue(jsonNode.get("success").asBoolean());
+        assertEquals("没有权限看到的知识会怎样", jsonNode.get("question").asText());
+        assertEquals("抱歉，知识库中没有足够信息支持回答该问题。", jsonNode.get("answer").asText());
+        assertTrue(jsonNode.get("citations").isArray());
+        assertEquals(0, jsonNode.get("citations").size());
+        assertFalse(jsonNode.get("hasCitations").asBoolean());
+    }
+
 }

@@ -1,0 +1,318 @@
+package com.jujiu.agent.service.kb.impl;
+
+import com.jujiu.agent.common.exception.BusinessException;
+import com.jujiu.agent.model.dto.request.GrantDocumentAclRequest;
+import com.jujiu.agent.model.dto.response.KbDocumentAclResponse;
+import com.jujiu.agent.model.entity.KbDocument;
+import com.jujiu.agent.model.entity.KbDocumentAcl;
+import com.jujiu.agent.repository.KbDocumentAclRepository;
+import com.jujiu.agent.repository.KbDocumentRepository;
+import com.jujiu.agent.service.kb.DocumentAclAuditService;
+import com.jujiu.agent.service.kb.DocumentAclService;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
+
+import java.time.LocalDateTime;
+import java.util.List;
+
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.*;
+
+class DocumentAclManageServiceImplTest {
+
+    private KbDocumentRepository kbDocumentRepository;
+    private KbDocumentAclRepository kbDocumentAclRepository;
+    private DocumentAclService documentAclService;
+    private DocumentAclManageServiceImpl documentAclManageService;
+    private DocumentAclAuditService documentAclAuditService;
+
+    @BeforeEach
+    void setUp() {
+        kbDocumentRepository = mock(KbDocumentRepository.class);
+        kbDocumentAclRepository = mock(KbDocumentAclRepository.class);
+        documentAclService = mock(DocumentAclService.class);
+        documentAclAuditService = mock(DocumentAclAuditService.class);
+        
+        documentAclManageService = new DocumentAclManageServiceImpl(
+                kbDocumentRepository,
+                kbDocumentAclRepository,
+                documentAclService,
+                documentAclAuditService
+        );
+    }
+
+    @Test
+    @DisplayName("有管理权限时应能查询文档 ACL 列表")
+    void listDocumentAcl_shouldReturnAclList_whenUserCanManage() {
+        KbDocument document = buildDocument(1L, 2001L);
+        KbDocumentAcl acl = KbDocumentAcl.builder()
+                .id(11L)
+                .documentId(1L)
+                .principalType("USER")
+                .principalId("3001")
+                .permission("READ")
+                .createdAt(LocalDateTime.now())
+                .build();
+
+        when(kbDocumentRepository.selectById(1L)).thenReturn(document);
+        when(documentAclService.canManage(1001L, document)).thenReturn(true);
+        when(kbDocumentAclRepository.selectList(any())).thenReturn(List.of(acl));
+
+        List<KbDocumentAclResponse> result = documentAclManageService.listDocumentAcl(1001L, 1L);
+
+        assertNotNull(result);
+        assertEquals(1, result.size());
+        assertEquals(11L, result.get(0).getId());
+        assertEquals(1L, result.get(0).getDocumentId());
+        assertEquals("USER", result.get(0).getPrincipalType());
+        assertEquals("3001", result.get(0).getPrincipalId());
+        assertEquals("READ", result.get(0).getPermission());
+
+        verify(kbDocumentRepository, times(1)).selectById(1L);
+        verify(documentAclService, times(1)).canManage(1001L, document);
+        verify(kbDocumentAclRepository, times(1)).selectList(any());
+    }
+
+    @Test
+    @DisplayName("无管理权限时查询文档 ACL 列表应抛异常")
+    void listDocumentAcl_shouldThrow_whenUserCannotManage() {
+        KbDocument document = buildDocument(1L, 2001L);
+
+        when(kbDocumentRepository.selectById(1L)).thenReturn(document);
+        when(documentAclService.canManage(1001L, document)).thenReturn(false);
+
+        BusinessException exception = assertThrows(
+                BusinessException.class,
+                () -> documentAclManageService.listDocumentAcl(1001L, 1L)
+        );
+
+        assertTrue(exception.getMessage().contains("文档不存在"));
+
+        verify(kbDocumentRepository, times(1)).selectById(1L);
+        verify(documentAclService, times(1)).canManage(1001L, document);
+        verifyNoInteractions(kbDocumentAclRepository);
+    }
+
+    @Test
+    @DisplayName("授予 READ 权限成功时应写入 ACL 记录")
+    void grantDocumentAcl_shouldInsertAcl_whenRequestValid() {
+        KbDocument document = buildDocument(1L, 2001L);
+        GrantDocumentAclRequest request = new GrantDocumentAclRequest("USER", "3001", "READ");
+
+        when(kbDocumentRepository.selectById(1L)).thenReturn(document);
+        when(documentAclService.canManage(1001L, document)).thenReturn(true);
+        when(kbDocumentAclRepository.selectOne(any())).thenReturn(null);
+
+        documentAclManageService.grantDocumentAcl(1001L, 1L, request);
+
+        ArgumentCaptor<KbDocumentAcl> captor = ArgumentCaptor.forClass(KbDocumentAcl.class);
+        verify(kbDocumentAclRepository, times(1)).insert(captor.capture());
+        verify(documentAclAuditService, times(1))
+                .logAclGrant(1L, 1001L, "USER", "3001", "READ");
+
+        KbDocumentAcl inserted = captor.getValue();
+        assertEquals(1L, inserted.getDocumentId());
+        assertEquals("USER", inserted.getPrincipalType());
+        assertEquals("3001", inserted.getPrincipalId());
+        assertEquals("READ", inserted.getPermission());
+        assertNotNull(inserted.getCreatedAt());
+    }
+
+    @Test
+    @DisplayName("重复授权时应幂等返回且不重复写入")
+    void grantDocumentAcl_shouldBeIdempotent_whenAclAlreadyExists() {
+        KbDocument document = buildDocument(1L, 2001L);
+        GrantDocumentAclRequest request = new GrantDocumentAclRequest("USER", "3001", "READ");
+        KbDocumentAcl existing = KbDocumentAcl.builder()
+                .id(99L)
+                .documentId(1L)
+                .principalType("USER")
+                .principalId("3001")
+                .permission("READ")
+                .build();
+
+        when(kbDocumentRepository.selectById(1L)).thenReturn(document);
+        when(documentAclService.canManage(1001L, document)).thenReturn(true);
+        when(kbDocumentAclRepository.selectOne(any())).thenReturn(existing);
+
+        documentAclManageService.grantDocumentAcl(1001L, 1L, request);
+
+        verify(kbDocumentAclRepository, times(1)).selectOne(any());
+        verify(kbDocumentAclRepository, never()).insert(any());
+        verify(documentAclAuditService, never()).logAclGrant(anyLong(), anyLong(), anyString(), anyString(), anyString());
+
+    }
+
+    @Test
+    @DisplayName("给 owner 本人重复授权时应直接返回")
+    void grantDocumentAcl_shouldReturnDirectly_whenPrincipalIsOwner() {
+        KbDocument document = buildDocument(1L, 2001L);
+        GrantDocumentAclRequest request = new GrantDocumentAclRequest("USER", "2001", "MANAGE");
+
+        when(kbDocumentRepository.selectById(1L)).thenReturn(document);
+        when(documentAclService.canManage(1001L, document)).thenReturn(true);
+
+        documentAclManageService.grantDocumentAcl(1001L, 1L, request);
+
+        verify(kbDocumentAclRepository, never()).selectOne(any());
+        verify(kbDocumentAclRepository, never()).insert(any());
+        verify(documentAclAuditService, never()).logAclGrant(anyLong(), anyLong(), anyString(), anyString(), anyString());
+
+    }
+
+    @Test
+    @DisplayName("回收授权成功时应删除 ACL 记录")
+    void revokeDocumentAcl_shouldDeleteAcl_whenRequestValid() {
+        KbDocument document = buildDocument(1L, 2001L);
+
+        when(kbDocumentRepository.selectById(1L)).thenReturn(document);
+        when(documentAclService.canManage(1001L, document)).thenReturn(true);
+        when(kbDocumentAclRepository.delete(any())).thenReturn(1);
+
+        documentAclManageService.revokeDocumentAcl(1001L, 1L, "USER", "3001", "READ");
+
+        verify(kbDocumentAclRepository, times(1)).delete(any());
+        verify(documentAclAuditService, times(1))
+                .logAclRevoke(1L, 1001L, "USER", "3001", "READ");
+
+    }
+
+    @Test
+    @DisplayName("principalType 非法时授权应抛异常")
+    void grantDocumentAcl_shouldThrow_whenPrincipalTypeInvalid() {
+        KbDocument document = buildDocument(1L, 2001L);
+        GrantDocumentAclRequest request = new GrantDocumentAclRequest("GROUP", "3001", "READ");
+
+        when(kbDocumentRepository.selectById(1L)).thenReturn(document);
+        when(documentAclService.canManage(1001L, document)).thenReturn(true);
+
+        BusinessException exception = assertThrows(
+                BusinessException.class,
+                () -> documentAclManageService.grantDocumentAcl(1001L, 1L, request)
+        );
+
+        assertTrue(exception.getMessage().contains("当前仅支持 USER 主体类型"));
+        verify(kbDocumentAclRepository, never()).insert(any());
+    }
+
+    @Test
+    @DisplayName("permission 非法时授权应抛异常")
+    void grantDocumentAcl_shouldThrow_whenPermissionInvalid() {
+        KbDocument document = buildDocument(1L, 2001L);
+        GrantDocumentAclRequest request = new GrantDocumentAclRequest("USER", "3001", "DELETE");
+
+        when(kbDocumentRepository.selectById(1L)).thenReturn(document);
+        when(documentAclService.canManage(1001L, document)).thenReturn(true);
+
+        BusinessException exception = assertThrows(
+                BusinessException.class,
+                () -> documentAclManageService.grantDocumentAcl(1001L, 1L, request)
+        );
+
+        assertTrue(exception.getMessage().contains("当前仅支持 READ 或 MANAGE 权限"));
+        verify(kbDocumentAclRepository, never()).insert(any());
+    }
+
+    @Test
+    @DisplayName("文档不存在时回收授权应抛异常")
+    void revokeDocumentAcl_shouldThrow_whenDocumentNotFound() {
+        when(kbDocumentRepository.selectById(1L)).thenReturn(null);
+
+        BusinessException exception = assertThrows(
+                BusinessException.class,
+                () -> documentAclManageService.revokeDocumentAcl(1001L, 1L, "USER", "3001", "READ")
+        );
+
+        assertTrue(exception.getMessage().contains("文档不存在"));
+        verifyNoInteractions(documentAclService);
+        verify(kbDocumentAclRepository, never()).delete(any());
+    }
+    
+    @Test
+    @DisplayName("有 SHARE 权限时应能查询文档 ACL 列表")
+    void listDocumentAcl_shouldReturnAclList_whenUserCanShare() {
+        KbDocument document = buildDocument(1L, 2001L);
+        KbDocumentAcl acl = KbDocumentAcl.builder()
+                .id(11L)
+                .documentId(1L)
+                .principalType("USER")
+                .principalId("3001")
+                .permission("READ")
+                .createdAt(LocalDateTime.now())
+                .build();
+
+        when(kbDocumentRepository.selectById(1L)).thenReturn(document);
+        when(documentAclService.canShare(1001L, document)).thenReturn(true);
+        when(kbDocumentAclRepository.selectList(any())).thenReturn(List.of(acl));
+
+        List<KbDocumentAclResponse> result = documentAclManageService.listDocumentAcl(1001L, 1L);
+
+        assertNotNull(result);
+        assertEquals(1, result.size());
+        verify(documentAclService, times(1)).canShare(1001L, document);
+    }
+
+    @Test
+    @DisplayName("有 SHARE 权限时应能授予文档 ACL")
+    void grantDocumentAcl_shouldInsertAcl_whenUserCanShare() {
+        KbDocument document = buildDocument(1L, 2001L);
+        GrantDocumentAclRequest request = new GrantDocumentAclRequest("USER", "3001", "SHARE");
+
+        when(kbDocumentRepository.selectById(1L)).thenReturn(document);
+        when(documentAclService.canShare(1001L, document)).thenReturn(true);
+        when(kbDocumentAclRepository.selectOne(any())).thenReturn(null);
+
+        documentAclManageService.grantDocumentAcl(1001L, 1L, request);
+
+        verify(kbDocumentAclRepository, times(1)).insert(any());
+        verify(documentAclAuditService, times(1))
+                .logAclGrant(1L, 1001L, "USER", "3001", "SHARE");
+    }
+    
+    @Test
+    @DisplayName("有 SHARE 权限时应能回收文档 ACL")
+    void revokeDocumentAcl_shouldDeleteAcl_whenUserCanShare() {
+        KbDocument document = buildDocument(1L, 2001L);
+
+        when(kbDocumentRepository.selectById(1L)).thenReturn(document);
+        when(documentAclService.canShare(1001L, document)).thenReturn(true);
+        when(kbDocumentAclRepository.delete(any())).thenReturn(1);
+
+        documentAclManageService.revokeDocumentAcl(1001L, 1L, "USER", "3001", "READ");
+
+        verify(kbDocumentAclRepository, times(1)).delete(any());
+        verify(documentAclAuditService, times(1))
+                .logAclRevoke(1L, 1001L, "USER", "3001", "READ");
+    }
+    @Test
+    @DisplayName("应允许给 GROUP 主体授予权限")
+    void grantDocumentAcl_shouldInsertAcl_whenPrincipalTypeIsGroup() {
+        KbDocument document = buildDocument(1L, 2001L);
+        GrantDocumentAclRequest request = new GrantDocumentAclRequest("GROUP", "10", "READ");
+
+        when(kbDocumentRepository.selectById(1L)).thenReturn(document);
+        when(documentAclService.canShare(1001L, document)).thenReturn(true);
+        when(kbDocumentAclRepository.selectOne(any())).thenReturn(null);
+
+        documentAclManageService.grantDocumentAcl(1001L, 1L, request);
+
+        verify(kbDocumentAclRepository, times(1)).insert(any());
+        verify(documentAclAuditService, times(1))
+                .logAclGrant(1L, 1001L, "GROUP", "10", "READ");
+    }
+
+    private KbDocument buildDocument(Long id, Long ownerUserId) {
+        KbDocument document = new KbDocument();
+        document.setId(id);
+        document.setKbId(1L);
+        document.setTitle("ACL 测试文档");
+        document.setOwnerUserId(ownerUserId);
+        document.setVisibility("PRIVATE");
+        document.setEnabled(1);
+        document.setDeleted(0);
+        return document;
+    }
+}

@@ -118,6 +118,7 @@ public class RagServiceImpl implements RagService {
                 topK);
 
         if (searchResults == null || searchResults.isEmpty()) {
+            logAclAwareEmptyResult(userId, kbId, "KB_API");
             return handleEmptyResult(userId, kbId, request, topK, startTime);
         }
 
@@ -197,12 +198,13 @@ public class RagServiceImpl implements RagService {
                 userId,
                 question,
                 targetTopK);
-        
+
         if (searchResults == null || searchResults.isEmpty()) {
-            log.info("[KB][CONTEXT] 未检索到可用知识片段 - kbId={}, userId={}", targetKbId, userId);
+            logAclAwareEmptyResult(userId, kbId, "KB_API");
             return "";
         }
-        
+
+
         String context = buildContext(searchResults);
 
         log.info("[KB][CONTEXT] 知识上下文构造完成 - kbId={}, userId={}, resultCount={}, contextLength={}",
@@ -245,7 +247,7 @@ public class RagServiceImpl implements RagService {
                 );
 
                 if (searchResults == null || searchResults.isEmpty()) {
-                    log.info("[KB][QUERY][STREAM] 未检索到可用结果 - kbId={}, userId={}", kbId, userId);
+                    logAclAwareEmptyResult(userId, kbId, "KB_API_STREAM");
 
                     emitter.send(SseEmitter.event()
                             .name("message")
@@ -608,6 +610,7 @@ public class RagServiceImpl implements RagService {
 
         return citations;
     }
+    
     private void validateRequest(Long userId, QueryKnowledgeBaseRequest request) {
         if (userId == null || userId <= 0) {
             throw new BusinessException(ResultCode.INVALID_PARAMETER, "userId 不能为空");
@@ -618,5 +621,10 @@ public class RagServiceImpl implements RagService {
         if (request.getQuestion() == null || request.getQuestion().isBlank()) {
             throw new BusinessException(ResultCode.INVALID_PARAMETER, "question 不能为空");
         }
+    }
+
+    private void logAclAwareEmptyResult(Long userId, Long kbId, String source) {
+        log.info("[KB][ACL] 检索结果为空 - source={}, kbId={}, userId={}, reason=NO_ACCESSIBLE_OR_MATCHED_DOCUMENT",
+                source, kbId, userId);
     }
 }

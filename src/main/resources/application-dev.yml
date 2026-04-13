@@ -1,0 +1,76 @@
+spring:
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    url: jdbc:mysql://localhost:3306/intelligent_qa_agent?useUnicode=true&characterEncoding=utf8&useSSL=false&serverTimezone=Asia/Shanghai
+    username: root
+    password: ${DB_PASSWORD}
+  data:
+    redis:
+      host: localhost
+      port: 16379
+      password:
+      database: 0
+      timeout: 3000ms
+  elasticsearch:
+    uris: http://localhost:9201
+  kafka:
+    bootstrap-servers: 127.0.0.1:9092
+    producer:
+      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+    consumer:
+      group-id: kb-document-processor
+      auto-offset-reset: earliest
+      value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
+      enable-auto-commit: true
+      properties:
+        spring.json.trusted.packages: com.jujiu.agent.model.event
+
+mybatis-plus:
+  mapper-locations: classpath:mapper/*.xml
+  type-aliases-package: com.jujiu.agent.model
+  configuration:
+    map-underscore-to-camel-case: true
+
+logging:
+  level:
+    com.jujiu.agent: DEBUG        # 开发环境开启 DEBUG
+
+jwt:
+  secret: ${JWT_SECRET:dev-secret-change-me-dev-secret-change-me}
+
+deepseek:
+  api-key: ${DEEPSEEK_API_KEY:your-key}
+  base-url: https://api.deepseek.com
+  model: deepseek-chat
+  max-context-messages: 50
+  max-messages-per-minute: 100   # 开发环境放宽限流
+  rate-limit-window-seconds: 60
+  system-prompt: "你是一个智能助手"
+
+amap:
+  weather:
+    key: ${AMAP_WEATHER_KEY}
+    
+serpapi:
+  api:
+    key: ${SERPAPI_API_KEY:}
+    
+baidu:
+  translate:
+    app-id: ${BAIDU_TRANSLATE_APP_ID:}
+    secret-key: ${BAIDU_TRANSLATE_APP_SECRET:}
+
+knowledge-base:
+  minio:
+    endpoint: http://localhost:9000
+    access-key: ${KB_MINIO_ACCESS_KEY:minioadmin}
+    secret-key: ${KB_MINIO_SECRET_KEY:minioadmin123}
+    bucket-name: ${KB_MINIO_BUCKET_NAME:intelligent-qa-kb}
+  kafka:
+    topic-document-process: ${KB_KAFKA_TOPIC_DOCUMENT_PROCESS:kb-document-process}
+
+app:
+  cors:
+    allowed-origins:
+      - http://localhost:5173
+      - http://127.0.0.1:5173
