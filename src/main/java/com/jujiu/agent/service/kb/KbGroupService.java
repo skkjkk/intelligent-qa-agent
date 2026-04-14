@@ -43,4 +43,13 @@ public interface KbGroupService {
      * @return 群组成员
      */
     List<KbGroupMemberResponse> listMembers(Long userId, Long groupId);
+
+    /**
+     * 列出用户群组
+     *
+     * @param userId 用户id
+     * @return 群组
+     */
+    List<KbGroupResponse> listMyGroups(Long userId);
+
 }

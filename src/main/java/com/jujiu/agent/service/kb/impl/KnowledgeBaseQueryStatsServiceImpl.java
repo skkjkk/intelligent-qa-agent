@@ -25,8 +25,14 @@ import java.util.List;
 @Service
 @Slf4j
 public class KnowledgeBaseQueryStatsServiceImpl implements KnowledgeBaseQueryStatsService {
+    /** 知识库查询日志仓储。 */
     private final KbQueryLogRepository kbQueryLogRepository;
 
+    /**
+     * 构造方法。
+     *
+     * @param kbQueryLogRepository 知识库查询日志仓储
+     */
     public KnowledgeBaseQueryStatsServiceImpl(KbQueryLogRepository kbQueryLogRepository) {
         this.kbQueryLogRepository = kbQueryLogRepository;
     }
@@ -40,23 +46,26 @@ public class KnowledgeBaseQueryStatsServiceImpl implements KnowledgeBaseQuerySta
      */
     @Override
     public KbQueryStatsResponse getQueryStats(Long userId, Long kbId) {
+        // 1. 参数校验
         if (userId == null || userId <= 0) {
             throw new BusinessException(ResultCode.INVALID_PARAMETER, "userId 不能为空");
         }
 
+        // 2. 统计各状态问答数量
         Long totalQueries = countQueries(userId, kbId, null);
         Long successQueries = countQueries(userId, kbId, "SUCCESS");
         Long emptyQueries = countQueries(userId, kbId, "EMPTY");
         Long failedQueries = countQueries(userId, kbId, "FAILED");
 
+        // 3. 查询日志列表并计算平均值
         List<KbQueryLog> queryLogs = listQueries(userId, kbId);
-
         Long avgLatencyMs = calculateAverageLatency(queryLogs);
         Long avgTotalTokens = calculateAverageTokens(queryLogs);
 
         log.info("[KB][STATS] 问答统计查询完成 - userId={}, kbId={}, totalQueries={}, successQueries={}, emptyQueries={}, failedQueries={}",
                 userId, kbId, totalQueries, successQueries, emptyQueries, failedQueries);
 
+        // 4. 构建并返回响应对象
         return KbQueryStatsResponse.builder()
                 .totalQueries(totalQueries)
                 .successQueries(successQueries)
@@ -76,9 +85,11 @@ public class KnowledgeBaseQueryStatsServiceImpl implements KnowledgeBaseQuerySta
      * @return 问答数量
      */
     private Long countQueries(Long userId, Long kbId, String status) {
+        // 1. 构建基础查询条件：按用户 ID 过滤
         LambdaQueryWrapper<KbQueryLog> wrapper = new LambdaQueryWrapper<KbQueryLog>()
                 .eq(KbQueryLog::getUserId, userId);
 
+        // 2. 按需追加知识库 ID 和状态筛选条件
         if (kbId != null) {
             wrapper.eq(KbQueryLog::getKbId, kbId);
         }
@@ -86,6 +97,7 @@ public class KnowledgeBaseQueryStatsServiceImpl implements KnowledgeBaseQuerySta
             wrapper.eq(KbQueryLog::getStatus, status);
         }
 
+        // 3. 执行计数查询
         return kbQueryLogRepository.selectCount(wrapper);
     }
 
@@ -97,13 +109,16 @@ public class KnowledgeBaseQueryStatsServiceImpl implements KnowledgeBaseQuerySta
      * @return 问答日志列表
      */
     private List<KbQueryLog> listQueries(Long userId, Long kbId) {
+        // 1. 构建基础查询条件
         LambdaQueryWrapper<KbQueryLog> wrapper = new LambdaQueryWrapper<KbQueryLog>()
                 .eq(KbQueryLog::getUserId, userId);
 
+        // 2. 若指定了知识库 ID，追加筛选条件
         if (kbId != null) {
             wrapper.eq(KbQueryLog::getKbId, kbId);
         }
 
+        // 3. 执行查询
         return kbQueryLogRepository.selectList(wrapper);
     }
 
@@ -114,10 +129,12 @@ public class KnowledgeBaseQueryStatsServiceImpl implements KnowledgeBaseQuerySta
      * @return 平均耗时
      */
     private Long calculateAverageLatency(List<KbQueryLog> queryLogs) {
+        // 1. 若日志为空，直接返回 0
         if (queryLogs == null || queryLogs.isEmpty()) {
             return 0L;
         }
 
+        // 2. 累加所有有效的 latencyMs
         long totalLatency = 0L;
         int count = 0;
         for (KbQueryLog queryLog : queryLogs) {
@@ -128,6 +145,7 @@ public class KnowledgeBaseQueryStatsServiceImpl implements KnowledgeBaseQuerySta
             }
         }
 
+        // 3. 计算平均值并返回
         return count == 0 ? 0L : totalLatency / count;
     }
 
@@ -138,10 +156,12 @@ public class KnowledgeBaseQueryStatsServiceImpl implements KnowledgeBaseQuerySta
      * @return 平均 Token 数
      */
     private Long calculateAverageTokens(List<KbQueryLog> queryLogs) {
+        // 1. 若日志为空，直接返回 0
         if (queryLogs == null || queryLogs.isEmpty()) {
             return 0L;
         }
 
+        // 2. 累加所有有效的 totalTokens
         long totalTokens = 0L;
         int count = 0;
         for (KbQueryLog queryLog : queryLogs) {
@@ -152,6 +172,7 @@ public class KnowledgeBaseQueryStatsServiceImpl implements KnowledgeBaseQuerySta
             }
         }
 
+        // 3. 计算平均值并返回
         return count == 0 ? 0L : totalTokens / count;
     }
 }

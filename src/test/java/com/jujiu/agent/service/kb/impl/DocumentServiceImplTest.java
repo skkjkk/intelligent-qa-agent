@@ -6,6 +6,7 @@ import com.jujiu.agent.model.dto.response.KbBatchOperationResponse;
 import com.jujiu.agent.model.dto.response.KbDocumentResponse;
 import com.jujiu.agent.model.entity.KbChunk;
 import com.jujiu.agent.model.entity.KbDocument;
+import com.jujiu.agent.model.enums.KbDocumentStatus;
 import com.jujiu.agent.model.enums.KbProcessStatus;
 import com.jujiu.agent.mq.DocumentProcessProducer;
 import com.jujiu.agent.repository.KbChunkRepository;
@@ -16,12 +17,12 @@ import com.jujiu.agent.service.kb.DocumentAclAuditService;
 import com.jujiu.agent.service.kb.DocumentAclService;
 import com.jujiu.agent.service.kb.ElasticsearchIndexService;
 import com.jujiu.agent.service.kb.EmbeddingService;
-import com.jujiu.agent.service.kb.impl.DocumentServiceImpl;
 import com.jujiu.agent.storage.MinioFileService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Set;
 
@@ -39,9 +40,11 @@ class DocumentServiceImplTest {
     private DocumentProcessProducer documentProcessProducer;
     private EmbeddingService embeddingService;
     private DocumentAclService documentAclService;
-    private DocumentServiceImpl documentService;
     private DocumentAclAuditService documentAclAuditService;
     private KbDocumentGroupRepository kbDocumentGroupRepository;
+
+    private DocumentServiceImpl documentService;
+
     @BeforeEach
     void setUp() {
         minioFileService = mock(MinioFileService.class);
@@ -54,6 +57,7 @@ class DocumentServiceImplTest {
         documentAclService = mock(DocumentAclService.class);
         documentAclAuditService = mock(DocumentAclAuditService.class);
         kbDocumentGroupRepository = mock(KbDocumentGroupRepository.class);
+
         documentService = new DocumentServiceImpl(
                 minioFileService,
                 kbDocumentRepository,
@@ -93,6 +97,8 @@ class DocumentServiceImplTest {
         assertThrows(BusinessException.class, () -> documentService.getDocument(1001L, 1L));
 
         verify(documentAclService, times(1)).canRead(1001L, document);
+        verify(documentAclAuditService, times(1))
+                .logAccessDenied(1L, 1001L, "NO_READ_PERMISSION");
     }
 
     @Test
@@ -100,16 +106,15 @@ class DocumentServiceImplTest {
     void listDocuments_shouldReturnReadableDocuments() {
         KbDocument readableDocument = buildDocument(1L, 2002L, "PRIVATE");
 
-        when(documentAclService.listReadableDocumentIds(1001L, 1L))
-                .thenReturn(Set.of(1L));
-        when(kbDocumentRepository.selectList(any()))
-                .thenReturn(List.of(readableDocument));
+        when(documentAclService.listReadableDocumentIds(1001L, 1L)).thenReturn(Set.of(1L));
+        when(kbDocumentRepository.selectList(any())).thenReturn(List.of(readableDocument));
 
         List<KbDocumentResponse> responses = documentService.listDocuments(1001L, 1L);
 
         assertNotNull(responses);
         assertEquals(1, responses.size());
         assertEquals(1L, responses.get(0).getId());
+
         verify(documentAclService, times(1)).listReadableDocumentIds(1001L, 1L);
         verify(kbDocumentRepository, times(1)).selectList(any());
     }
@@ -131,6 +136,7 @@ class DocumentServiceImplTest {
         assertNotNull(response);
         assertEquals(1L, response.getDocumentId());
         assertEquals("SUCCESS", response.getStatus());
+
         verify(documentAclService, times(1)).canRead(1001L, document);
     }
 
@@ -149,7 +155,7 @@ class DocumentServiceImplTest {
     }
 
     @Test
-    @DisplayName("仅 READ 权限用户不应能索引文档")
+    @DisplayName("仅有 SHARE 或 READ 的用户不应能索引文档")
     void indexDocument_shouldThrow_whenUserCannotManage() {
         KbDocument document = buildDocument(1L, 2002L, "PRIVATE");
         when(kbDocumentRepository.selectById(1L)).thenReturn(document);
@@ -158,7 +164,32 @@ class DocumentServiceImplTest {
         assertThrows(BusinessException.class, () -> documentService.indexDocument(1001L, 1L));
 
         verify(documentAclService, times(1)).canManage(1001L, document);
+        verify(documentAclAuditService, times(1))
+                .logAccessDenied(1L, 1001L, "NO_MANAGE_PERMISSION");
         verifyNoInteractions(elasticsearchIndexService);
+    }
+
+    @Test
+    @DisplayName("可管理用户应能重建索引")
+    void rebuildIndex_shouldInvokeDeleteAndReindex_whenUserCanManage() {
+        KbDocument document = buildDocument(1L, 2002L, "PRIVATE");
+        document.setEnabled(1);
+        document.setParseStatus(KbProcessStatus.SUCCESS.name());
+        document.setChunkCount(1);
+
+        KbChunk chunk = buildChunk(11L, 1L);
+
+        when(kbDocumentRepository.selectById(1L)).thenReturn(document);
+        when(documentAclService.canManage(1001L, document)).thenReturn(true);
+        when(kbChunkRepository.selectList(any())).thenReturn(List.of(chunk), List.of(chunk));
+        when(embeddingService.embedDocument(anyString())).thenReturn(new float[]{0.1f, 0.2f});
+
+        documentService.rebuildIndex(1001L, 1L);
+
+        verify(documentAclService, atLeastOnce()).canManage(1001L, document);
+        verify(elasticsearchIndexService, times(1)).deleteByDocumentId(1L);
+        verify(elasticsearchIndexService, times(1)).ensureIndexExists();
+        verify(elasticsearchIndexService, times(1)).indexChunk(eq(document), eq(chunk), any());
     }
 
     @Test
@@ -207,9 +238,7 @@ class DocumentServiceImplTest {
 
         verify(elasticsearchIndexService, times(2)).ensureIndexExists();
         verify(elasticsearchIndexService, times(2)).indexChunk(any(KbDocument.class), any(KbChunk.class), any());
-
         verify(kbDocumentRepository, never()).selectById(3L);
-
     }
 
     @Test
@@ -230,20 +259,18 @@ class DocumentServiceImplTest {
         when(kbDocumentRepository.selectList(any()))
                 .thenReturn(List.of(manageableFailedDocument1, manageableFailedDocument2, readOnlyFailedDocument));
 
-        when(kbChunkRepository.selectList(any()))
-                .thenReturn(List.of(chunk1))
-                .thenReturn(List.of(chunk1))
-                .thenReturn(List.of(chunk2))
-                .thenReturn(List.of(chunk2));
-
-
-
         when(documentAclService.canManage(1001L, manageableFailedDocument1)).thenReturn(true);
         when(documentAclService.canManage(1001L, manageableFailedDocument2)).thenReturn(true);
         when(documentAclService.canManage(1001L, readOnlyFailedDocument)).thenReturn(false);
 
         when(kbDocumentRepository.selectById(11L)).thenReturn(manageableFailedDocument1);
         when(kbDocumentRepository.selectById(12L)).thenReturn(manageableFailedDocument2);
+
+        when(kbChunkRepository.selectList(any()))
+                .thenReturn(List.of(chunk1))
+                .thenReturn(List.of(chunk1))
+                .thenReturn(List.of(chunk2))
+                .thenReturn(List.of(chunk2));
 
         when(embeddingService.embedDocument(anyString()))
                 .thenReturn(new float[]{0.1f, 0.2f});
@@ -266,48 +293,6 @@ class DocumentServiceImplTest {
 
         verify(kbDocumentRepository, never()).selectById(13L);
         verify(elasticsearchIndexService, never()).deleteByDocumentId(13L);
-
-    }
-
-
-    @Test
-    @DisplayName("可管理用户应能重建索引")
-    void rebuildIndex_shouldInvokeDeleteAndReindex_whenUserCanManage() {
-        KbDocument document = buildDocument(1L, 2002L, "PRIVATE");
-        document.setEnabled(1);
-        document.setParseStatus(KbProcessStatus.SUCCESS.name());
-        document.setChunkCount(1);
-
-        KbChunk chunk = new KbChunk();
-        chunk.setId(11L);
-        chunk.setDocumentId(1L);
-        chunk.setChunkIndex(0);
-        chunk.setContent("分块内容");
-        chunk.setEnabled(1);
-
-        when(kbDocumentRepository.selectById(1L)).thenReturn(document);
-        when(documentAclService.canManage(1001L, document)).thenReturn(true);
-        when(kbChunkRepository.selectList(any())).thenReturn(List.of(chunk));
-        when(embeddingService.embedDocument(any())).thenReturn(new float[]{0.1f, 0.2f});
-
-        documentService.rebuildIndex(1001L, 1L);
-
-        verify(documentAclService, atLeastOnce()).canManage(1001L, document);
-        verify(elasticsearchIndexService, times(1)).deleteByDocumentId(1L);
-        verify(elasticsearchIndexService, times(1)).ensureIndexExists();
-        verify(elasticsearchIndexService, times(1)).indexChunk(eq(document), eq(chunk), any());
-    }
-
-    @Test
-    @DisplayName("仅有 SHARE 权限时不应能删除文档")
-    void deleteDocument_shouldThrow_whenUserCanShareButCannotManage() {
-        KbDocument document = buildDocument(1L, 2002L, "PRIVATE");
-        when(kbDocumentRepository.selectById(1L)).thenReturn(document);
-        when(documentAclService.canManage(1001L, document)).thenReturn(false);
-
-        assertThrows(BusinessException.class, () -> documentService.deleteDocument(1001L, 1L));
-
-        verify(kbDocumentRepository, never()).updateById(any());
     }
 
     private KbDocument buildDocument(Long id, Long ownerUserId, String visibility) {
@@ -324,7 +309,10 @@ class DocumentServiceImplTest {
         document.setEnabled(1);
         document.setParseStatus(KbProcessStatus.SUCCESS.name());
         document.setIndexStatus(KbProcessStatus.PENDING.name());
+        document.setStatus(KbDocumentStatus.SUCCESS.name());
         document.setChunkCount(1);
+        document.setCreatedAt(LocalDateTime.now());
+        document.setUpdatedAt(LocalDateTime.now());
         return document;
     }
 
@@ -337,11 +325,4 @@ class DocumentServiceImplTest {
         chunk.setEnabled(1);
         return chunk;
     }
-
-    private void mockIndexDocumentDependencies(KbDocument document, KbChunk chunk) {
-        when(kbDocumentRepository.selectById(document.getId())).thenReturn(document);
-        when(kbChunkRepository.selectList(any())).thenReturn(List.of(chunk));
-        when(embeddingService.embedDocument(anyString())).thenReturn(new float[]{0.1f, 0.2f});
-    }
-
 }

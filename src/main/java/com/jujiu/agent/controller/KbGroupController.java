@@ -64,4 +64,12 @@ public class KbGroupController {
         Long userId = getCurrentUserId();
         return Result.success(kbGroupService.listMembers(userId, groupId));
     }
+
+    @GetMapping
+    @Operation(summary = "查询当前用户所属用户组")
+    public Result<List<KbGroupResponse>> listMyGroups() {
+        Long userId = getCurrentUserId();
+        return Result.success(kbGroupService.listMyGroups(userId));
+    }
+
 }

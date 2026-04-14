@@ -98,9 +98,6 @@ class ChatServiceImplTest {
                 .createdAt(LocalDateTime.now())
                 .build();
 
-        DeepSeekResult titleResult = new DeepSeekResult();
-        titleResult.setReply("测试标题");
-
         DeepSeekResult chatResult = new DeepSeekResult();
         chatResult.setReply("这是 AI 回复");
         chatResult.setPromptTokens(100);
@@ -137,5 +134,129 @@ class ChatServiceImplTest {
                 .chatWithTools(eq(1001L), anyList());
         verify(chatPersistenceService, times(1))
                 .saveAssistantMessage("session_001", "这是 AI 回复", 50);
+    }
+
+    @Test
+    @DisplayName("开启知识增强且有上下文时也应正常聊天")
+    void sendMessage_shouldContinueWhenKnowledgeContextPresent() {
+        Session session = Session.builder()
+                .sessionId("session_002")
+                .userId(1001L)
+                .title("原始标题")
+                .messageCount(2)
+                .lastMessage("上一次回复")
+                .createdAt(LocalDateTime.now())
+                .updatedAt(LocalDateTime.now())
+                .build();
+
+        Message userMessage = Message.builder()
+                .messageId("msg_user_002")
+                .sessionId("session_002")
+                .role("user")
+                .content("ACL 怎么设计")
+                .createdAt(LocalDateTime.now())
+                .build();
+
+        Message aiMessage = Message.builder()
+                .messageId("msg_ai_002")
+                .sessionId("session_002")
+                .role("assistant")
+                .content("这是 AI 回复")
+                .createdAt(LocalDateTime.now())
+                .build();
+
+        DeepSeekResult chatResult = new DeepSeekResult();
+        chatResult.setReply("这是 AI 回复");
+        chatResult.setPromptTokens(120);
+        chatResult.setCompletionTokens(60);
+        chatResult.setTotalTokens(180);
+
+        SendMessageRequest request = new SendMessageRequest();
+        request.setSessionId("session_002");
+        request.setMessage("ACL 怎么设计");
+        request.setEnableKnowledgeBase(true);
+        request.setKnowledgeBaseId(1L);
+        request.setRetrievalTopK(5);
+
+        when(sessionRepository.selectOne(any())).thenReturn(session);
+        when(chatPersistenceService.saveUserMessage("session_002", "ACL 怎么设计"))
+                .thenReturn(userMessage);
+        when(messageRepository.selectList(any())).thenReturn(List.of(userMessage));
+        when(ragService.buildKnowledgeContext(1001L, 1L, "ACL 怎么设计", 5))
+                .thenReturn("这是知识库上下文");
+        when(functionCallingService.chatWithTools(eq(1001L), anyList()))
+                .thenReturn(chatResult);
+        when(chatPersistenceService.saveAssistantMessage("session_002", "这是 AI 回复", 60))
+                .thenReturn(aiMessage);
+
+        ChatResponse response = chatService.sendMessage(1001L, request);
+
+        assertNotNull(response);
+        assertEquals("session_002", response.getSessionId());
+        assertEquals("这是 AI 回复", response.getReply());
+
+        verify(ragService, times(1))
+                .buildKnowledgeContext(1001L, 1L, "ACL 怎么设计", 5);
+        verify(functionCallingService, times(1))
+                .chatWithTools(eq(1001L), anyList());
+    }
+
+    @Test
+    @DisplayName("未开启知识增强时不应调用知识库上下文构造")
+    void sendMessage_shouldNotCallKnowledgeContextWhenKnowledgeEnhanceDisabled() {
+        Session session = Session.builder()
+                .sessionId("session_003")
+                .userId(1001L)
+                .title("原始标题")
+                .messageCount(2)
+                .lastMessage("上一次回复")
+                .createdAt(LocalDateTime.now())
+                .updatedAt(LocalDateTime.now())
+                .build();
+
+        Message userMessage = Message.builder()
+                .messageId("msg_user_003")
+                .sessionId("session_003")
+                .role("user")
+                .content("普通聊天问题")
+                .createdAt(LocalDateTime.now())
+                .build();
+
+        Message aiMessage = Message.builder()
+                .messageId("msg_ai_003")
+                .sessionId("session_003")
+                .role("assistant")
+                .content("普通聊天回复")
+                .createdAt(LocalDateTime.now())
+                .build();
+
+        DeepSeekResult chatResult = new DeepSeekResult();
+        chatResult.setReply("普通聊天回复");
+        chatResult.setPromptTokens(80);
+        chatResult.setCompletionTokens(40);
+        chatResult.setTotalTokens(120);
+
+        SendMessageRequest request = new SendMessageRequest();
+        request.setSessionId("session_003");
+        request.setMessage("普通聊天问题");
+        request.setEnableKnowledgeBase(false);
+
+        when(sessionRepository.selectOne(any())).thenReturn(session);
+        when(chatPersistenceService.saveUserMessage("session_003", "普通聊天问题"))
+                .thenReturn(userMessage);
+        when(messageRepository.selectList(any())).thenReturn(List.of(userMessage));
+        when(functionCallingService.chatWithTools(eq(1001L), anyList()))
+                .thenReturn(chatResult);
+        when(chatPersistenceService.saveAssistantMessage("session_003", "普通聊天回复", 40))
+                .thenReturn(aiMessage);
+
+        ChatResponse response = chatService.sendMessage(1001L, request);
+
+        assertNotNull(response);
+        assertEquals("普通聊天回复", response.getReply());
+
+        verifyNoInteractions(ragService);
+        verify(functionCallingService, times(1))
+                .chatWithTools(eq(1001L), anyList());
     }
 }
