@@ -35,7 +35,7 @@ knowledge-base:
     
   # Elasticsearch
   elasticsearch:
-    index-name: kb_chunks_v2
+    index-name: kb_chunks_v3
     top-k: 5
     enable-hybrid: true
     
@@ -52,11 +52,20 @@ knowledge-base:
     topic-document-index: kb-document-index
     consumer-concurrency: 1
   chunking:
-    default-size: 500
-    default-overlap: 50
-    max-size: 1000
-    
-    
+    default-size: 700
+    default-overlap: 80
+    max-size: 1200
+  
+  rerank:
+    enabled: true
+    api-url: ${KB_RERANK_API_URL:https://dashscope.aliyuncs.com/api/v1/services/rerank/text-rerank/text-rerank}
+    api-key: ${KB_RERANK_API_KEY:${DASHSCOPE_API_KEY:}}
+    model: ${KB_RERANK_MODEL:qwen3-vl-rerank}
+    top-n: 10
+    max-candidates: 20
+    score-threshold: 0.75
+  
+  
   # RAG配置
   rag:
     max-context-chunks: 5

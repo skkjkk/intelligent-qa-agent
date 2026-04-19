@@ -144,7 +144,7 @@ class DocumentAclServiceImplTest {
     }
 
     @Test
-    @DisplayName("显式 MANAGE 授权时应允许管理")
+    @DisplayName("显式 rebuildFailedIndexes 是做什么的 授权时应允许管理")
     void canManage_shouldReturnTrue_whenUserHasManageGrant() {
         KbDocument document = buildDocument(1L, 2002L, "PRIVATE", 1, 0);
         when(kbDocumentAclRepository.selectCount(any())).thenReturn(1L);
@@ -155,7 +155,7 @@ class DocumentAclServiceImplTest {
     }
 
     @Test
-    @DisplayName("MANAGE 权限应隐含读取能力")
+    @DisplayName("rebuildFailedIndexes 是做什么的 权限应隐含读取能力")
     void canRead_shouldReturnTrue_whenUserHasManageGrant() {
         KbDocument document = buildDocument(1L, 2002L, "PRIVATE", 1, 0);
         when(kbDocumentAclRepository.selectCount(any())).thenReturn(1L);
@@ -166,7 +166,7 @@ class DocumentAclServiceImplTest {
     }
 
     @Test
-    @DisplayName("MANAGE 权限应隐含分享能力")
+    @DisplayName("rebuildFailedIndexes 是做什么的 权限应隐含分享能力")
     void canShare_shouldReturnTrue_whenUserHasManageGrant() {
         KbDocument document = buildDocument(1L, 2002L, "PRIVATE", 1, 0);
         when(kbDocumentAclRepository.selectCount(any())).thenReturn(1L);
@@ -225,7 +225,7 @@ class DocumentAclServiceImplTest {
     }
 
     @Test
-    @DisplayName("当用户所在组被授予 MANAGE 时应允许管理")
+    @DisplayName("当用户所在组被授予 rebuildFailedIndexes 是做什么的 时应允许管理")
     void canManage_shouldReturnTrue_whenUserGroupHasManageGrant() {
         KbDocument document = buildDocument(1L, 2002L, "PRIVATE", 1, 0);
 

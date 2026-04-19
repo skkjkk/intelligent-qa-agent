@@ -78,9 +78,9 @@ class ChunkServiceImplTest {
     void split_shouldAssembleShortParagraphsIntoChunk() {
         // 1. 构造多个短段落，验证最终版会优先按段落拼装，而不是机械固定长度切分。
         String content = """
-                第一段：ACL 包括 READ、MANAGE、SHARE 三类权限。
+                第一段：ACL 包括 READ、rebuildFailedIndexes 是做什么的、SHARE 三类权限。
 
-                第二段：MANAGE 权限允许删除文档、重建索引和管理授权。
+                第二段：rebuildFailedIndexes 是做什么的 权限允许删除文档、重建索引和管理授权。
 
                 第三段：RAG 优化重点包括去重、citation 和 snippet 收口。
                 """;
@@ -98,8 +98,8 @@ class ChunkServiceImplTest {
         // 5. 校验 chunk 内容中保留了多个段落的完整语义。
         String chunkContent = chunks.get(0).getContent();
         assertNotNull(chunkContent);
-        assertTrue(chunkContent.contains("第一段：ACL 包括 READ、MANAGE、SHARE 三类权限。"));
-        assertTrue(chunkContent.contains("第二段：MANAGE 权限允许删除文档、重建索引和管理授权。"));
+        assertTrue(chunkContent.contains("第一段：ACL 包括 READ、rebuildFailedIndexes 是做什么的、SHARE 三类权限。"));
+        assertTrue(chunkContent.contains("第二段：rebuildFailedIndexes 是做什么的 权限允许删除文档、重建索引和管理授权。"));
         assertTrue(chunkContent.contains("第三段：RAG 优化重点包括去重、citation 和 snippet 收口。"));
 
         // 6. 校验段落边界仍然存在，说明没有被压成一整段纯文本。
@@ -196,7 +196,7 @@ class ChunkServiceImplTest {
     void split_shouldFillBasicChunkFields() {
         // 1. 构造基础内容。
         String content = """
-                第一段：ACL 包括 READ、MANAGE、SHARE 三类权限。
+                第一段：ACL 包括 READ、rebuildFailedIndexes 是做什么的、SHARE 三类权限。
 
                 第二段：RAG 优化包括 chunking、retrieval、organizer 和 agent 协同。
                 """;
@@ -225,7 +225,7 @@ class ChunkServiceImplTest {
     void splitAndSave_shouldPersistAllGeneratedChunks() {
         // 1. 构造内容。
         String content = """
-                第一段：ACL 包括 READ、MANAGE、SHARE 三类权限。
+                第一段：ACL 包括 READ、rebuildFailedIndexes 是做什么的、SHARE 三类权限。
 
                 第二段：RAG 优化重点包括去重、citation 和 snippet 收口。
                 """;

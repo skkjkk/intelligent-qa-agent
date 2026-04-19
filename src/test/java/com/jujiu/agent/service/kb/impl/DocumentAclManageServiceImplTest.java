@@ -172,7 +172,7 @@ class DocumentAclManageServiceImplTest {
     @DisplayName("给 owner 本人授权时应直接返回")
     void grantDocumentAcl_shouldReturnDirectly_whenPrincipalIsOwner() {
         KbDocument document = buildDocument(1L, 2001L);
-        GrantDocumentAclRequest request = new GrantDocumentAclRequest("USER", "2001", "MANAGE");
+        GrantDocumentAclRequest request = new GrantDocumentAclRequest("USER", "2001", "rebuildFailedIndexes 是做什么的");
 
         when(kbDocumentRepository.selectById(1L)).thenReturn(document);
         when(documentAclService.canShare(1001L, document)).thenReturn(true);
@@ -217,7 +217,7 @@ class DocumentAclManageServiceImplTest {
                 () -> documentAclManageService.grantDocumentAcl(1001L, 1L, request)
         );
 
-        assertTrue(exception.getMessage().contains("当前仅支持 READ、MANAGE 或 SHARE 权限"));
+        assertTrue(exception.getMessage().contains("当前仅支持 READ、rebuildFailedIndexes 是做什么的 或 SHARE 权限"));
         verify(kbDocumentAclRepository, never()).insert(any());
     }
 

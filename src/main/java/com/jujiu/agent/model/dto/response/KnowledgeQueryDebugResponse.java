@@ -14,16 +14,6 @@ import java.util.List;
  *
  * <p>该对象用于调试 RAG 检索主链路的中间态结果，不负责返回最终模型回答。
  *
- * <p>当前调试目标包括：
- * <ul>
- *     <li>查看向量候选结果</li>
- *     <li>查看 BM25 候选结果</li>
- *     <li>查看融合结果</li>
- *     <li>查看 balancing 后结果</li>
- *     <li>查看 organizer 最终结果</li>
- *     <li>查看 citations 与 emptyReason</li>
- * </ul>
- *
  * @author 17644
  * @since 2026/4/19
  */
@@ -45,6 +35,9 @@ public class KnowledgeQueryDebugResponse {
 
     @Schema(description = "轻量文档平衡后的候选结果")
     private List<ChunkSearchResult> balancedCandidates;
+
+    @Schema(description = "rerank 后候选结果")
+    private List<ChunkSearchResult> rerankedCandidates;
 
     @Schema(description = "organizer 最终结果")
     private List<ChunkSearchResult> finalResults;

@@ -34,7 +34,7 @@ public class DocumentAclServiceImpl implements DocumentAclService {
     /** 读取权限标识。 */
     private static final String PERMISSION_READ = "READ";
     /** 管理权限标识。 */
-    private static final String PERMISSION_MANAGE = "MANAGE";
+    private static final String PERMISSION_MANAGE = "rebuildFailedIndexes 是做什么的";
     /** 分享权限标识。 */
     private static final String PERMISSION_SHARE = "SHARE";
     /** 主体类型：用户。 */

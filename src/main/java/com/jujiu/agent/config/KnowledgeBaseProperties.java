@@ -5,9 +5,20 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.stereotype.Component;
 
 /**
+ * 知识库配置属性。
+ *
+ * <p>统一承接知识库相关配置：
+ * <ul>
+ *     <li>embedding</li>
+ *     <li>elasticsearch</li>
+ *     <li>chunking</li>
+ *     <li>rag</li>
+ *     <li>rerank</li>
+ *     <li>security</li>
+ * </ul>
+ *
  * @author 17644
- * @version 1.0.0
- * @since 2026/3/31 17:30
+ * @since 2026/3/31
  */
 @Data
 @Component
@@ -25,6 +36,8 @@ public class KnowledgeBaseProperties {
     private Chunking chunking = new Chunking();
 
     private Rag rag = new Rag();
+    
+    private Rerank rerank = new Rerank();
 
     private Security security = new Security();
 
@@ -145,6 +158,52 @@ public class KnowledgeBaseProperties {
          * RAG Prompt 模板
          */
         private String promptTemplate;
+    }
+
+    @Data
+    public static class Rerank {
+
+        /**
+         * 是否启用独立 rerank 服务。
+         *
+         * <p>注意：该开关是检索层 rerank 主开关，
+         * 不建议再复用 rag.enableRerank 承载实现细节。
+         */
+        private Boolean enabled = false;
+
+        /**
+         * rerank 服务地址。
+         */
+        private String apiUrl;
+
+        /**
+         * rerank 服务 API Key。
+         */
+        private String apiKey;
+
+        /**
+         * rerank 模型名称。
+         */
+        private String model = "bge-reranker-v2-m3";
+
+        /**
+         * rerank 后最多保留的候选数量。
+         */
+        private Integer topN = 10;
+
+        /**
+         * 送入 rerank 的最大候选数。
+         *
+         * <p>过大只会浪费成本，过小会限制召回上界。
+         */
+        private Integer maxCandidates = 20;
+
+        /**
+         * rerank 分数阈值。
+         *
+         * <p>小于该阈值的候选会被过滤。
+         */
+        private Double scoreThreshold = 0D;
     }
     
     @Data

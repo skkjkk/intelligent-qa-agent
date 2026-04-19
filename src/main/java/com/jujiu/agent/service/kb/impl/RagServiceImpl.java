@@ -14,9 +14,6 @@ import com.jujiu.agent.model.dto.response.CitationResponse;
 import com.jujiu.agent.model.dto.response.KnowledgeQueryDebugResponse;
 import com.jujiu.agent.model.dto.response.KnowledgeQueryResponse;
 import com.jujiu.agent.model.entity.KbQueryLog;
-import com.jujiu.agent.model.entity.KbRetrievalTrace;
-import com.jujiu.agent.repository.KbQueryLogRepository;
-import com.jujiu.agent.repository.KbRetrievalTraceRepository;
 import com.jujiu.agent.service.kb.QueryLogService;
 import com.jujiu.agent.service.kb.RagService;
 import com.jujiu.agent.service.kb.RetrievalResultOrganizer;
@@ -30,12 +27,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
-import java.io.IOException;
-import java.math.BigDecimal;
-import java.time.LocalDateTime;
-import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 
 /**
@@ -74,9 +66,6 @@ public class RagServiceImpl implements RagService {
     /** 默认查询状态：未命中。 */
     private static final String DEFAULT_QUERY_STATUS_EMPTY = "EMPTY";
 
-    /** 默认查询状态：失败。 */
-    private static final String DEFAULT_QUERY_STATUS_FAILED = "FAILED";
-
     /** 流式输出缓冲最小长度（字节）。 */
     private static final int STREAM_FLUSH_MIN_LENGTH = 32;
 
@@ -85,13 +74,7 @@ public class RagServiceImpl implements RagService {
 
     /** DeepSeek 大模型客户端。 */
     private final DeepSeekClient deepSeekClient;
-
-    /** 知识库查询日志仓储。 */
-    private final KbQueryLogRepository kbQueryLogRepository;
-
-    /** 知识库检索轨迹仓储。 */
-    private final KbRetrievalTraceRepository kbRetrievalTraceRepository;
-
+    
     /** 知识库配置属性。 */
     private final KnowledgeBaseProperties knowledgeBaseProperties;
 
@@ -112,8 +95,6 @@ public class RagServiceImpl implements RagService {
      *
      * @param vectorSearchService         向量检索服务
      * @param deepSeekClient              DeepSeek 大模型客户端
-     * @param kbQueryLogRepository        知识库查询日志仓储
-     * @param kbRetrievalTraceRepository  知识库检索轨迹仓储
      * @param knowledgeBaseProperties     知识库配置属性
      * @param objectMapper                JSON 序列化器
      * @param chatExecutor                流式问答异步执行器
@@ -121,8 +102,6 @@ public class RagServiceImpl implements RagService {
      */
     public RagServiceImpl(VectorSearchService vectorSearchService,
                           DeepSeekClient deepSeekClient,
-                          KbQueryLogRepository kbQueryLogRepository,
-                          KbRetrievalTraceRepository kbRetrievalTraceRepository,
                           KnowledgeBaseProperties knowledgeBaseProperties,
                           ObjectMapper objectMapper,
                           ExecutorService chatExecutor,
@@ -130,8 +109,6 @@ public class RagServiceImpl implements RagService {
                           QueryLogService queryLogService) {
         this.vectorSearchService = vectorSearchService;
         this.deepSeekClient = deepSeekClient;
-        this.kbQueryLogRepository = kbQueryLogRepository;
-        this.kbRetrievalTraceRepository = kbRetrievalTraceRepository;
         this.knowledgeBaseProperties = knowledgeBaseProperties;
         this.objectMapper = objectMapper;
         this.chatExecutor = chatExecutor;
@@ -326,9 +303,10 @@ public class RagServiceImpl implements RagService {
                 topK
         );
 
-        // 3. organizer 继续基于 balancedCandidates 生成最终证据结果。
+        // 3. organizer 基于 rerank 后结果生成最终证据结果。
+        //    这样 debug 可以完整展示“召回 -> 融合 -> 平衡 -> rerank -> organizer”的链路。
         OrganizedRetrievalResult organizedResult = retrievalResultOrganizer.organize(
-                searchDebugResult.getBalancedCandidates(),
+                searchDebugResult.getRerankedCandidates(),
                 request.getQuestion()
         );
 
@@ -345,6 +323,7 @@ public class RagServiceImpl implements RagService {
                 .bm25Candidates(searchDebugResult.getBm25Candidates())
                 .mergedCandidates(searchDebugResult.getMergedCandidates())
                 .balancedCandidates(searchDebugResult.getBalancedCandidates())
+                .rerankedCandidates(searchDebugResult.getRerankedCandidates())
                 .finalResults(organizedResult.getFinalResults())
                 .citations(organizedResult.getCitations())
                 .context(organizedResult.getContext())
@@ -531,75 +510,7 @@ public class RagServiceImpl implements RagService {
                 || lastChar == '；'
                 || lastChar == '：';
     }
-
-    /**
-     * 保存检索轨迹。
-     *
-     * @param queryLogId 查询日志 ID
-     * @param searchResults 检索结果
-     */
-    private void saveRetrievalTrace(Long queryLogId, List<ChunkSearchResult> searchResults) {
-        for (ChunkSearchResult searchResult : searchResults) {
-            KbRetrievalTrace result = KbRetrievalTrace.builder()
-                    .queryLogId(queryLogId)
-                    .chunkId(searchResult.getChunkId())
-                    .score(searchResult.getScore() == null ? BigDecimal.ZERO : BigDecimal.valueOf(searchResult.getScore()))
-                    .rankNo(searchResult.getRank())
-                    .retrievalType(DEFAULT_RETRIEVAL_MODE)
-                    .createdAt(LocalDateTime.now())
-                    .build();
-            kbRetrievalTraceRepository.insert(result);
-        }
-    }
-
-    /**
-     * 保存知识库查询日志。
-     *
-     * @param userId 当前用户 ID
-     * @param kbId 知识库 ID
-     * @param request 原始请求
-     * @param topK 检索数量
-     * @param deepSeekResult 模型调用结果
-     * @param citations 引用列表
-     * @param latencyMs 总耗时
-     * @param status 查询状态
-     * @param errorMessage 错误信息
-     * @return 查询日志实体
-     */
-    private KbQueryLog saveQueryLog(Long userId,
-                                    Long kbId,
-                                    QueryKnowledgeBaseRequest request,
-                                    Integer topK,
-                                    DeepSeekResult deepSeekResult,
-                                    List<CitationResponse> citations,
-                                    long latencyMs,
-                                    String status,
-                                    String errorMessage) {
-
-        KbQueryLog queryLog = KbQueryLog.builder()
-                .kbId(kbId)
-                .userId(userId)
-                .sessionId(null)
-                .querySource(DEFAULT_QUERY_SOURCE)
-                .question(request.getQuestion())
-                .rewrittenQuestion(null)
-                .answer(deepSeekResult != null ? deepSeekResult.getReply() : "知识库中没有足够信息支持回答该问题。")
-                .retrievalTopK(topK)
-                .retrievalMode(DEFAULT_RETRIEVAL_MODE)
-                .citedChunkIds(toCitedChunkIdsJson(citations))
-                .promptTokens(deepSeekResult != null ? deepSeekResult.getPromptTokens() : 0)
-                .completionTokens(deepSeekResult != null ? deepSeekResult.getCompletionTokens() : 0)
-                .totalTokens(deepSeekResult != null ? deepSeekResult.getTotalTokens() : 0)
-                .latencyMs(Math.toIntExact(latencyMs))
-                .status(status)
-                .errorMessage(errorMessage)
-                .createdAt(LocalDateTime.now())
-                .build();
-        kbQueryLogRepository.insert(queryLog);
-        
-        return queryLog;
-    }
-
+    
     /**
      * 将引用中的 chunkId 列表转换为 JSON 字符串。
      *

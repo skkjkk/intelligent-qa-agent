@@ -223,11 +223,21 @@ public class ElasticsearchIndexServiceImpl implements ElasticsearchIndexService 
         properties.put("chunkId", Property.of(p -> p.long_(l -> l)));
         properties.put("documentId", Property.of(p -> p.long_(l -> l)));
         properties.put("kbId", Property.of(p -> p.long_(l -> l)));
-        
-        // 3. 注册文本检索字段
-        properties.put("title", Property.of(p -> p.text(t -> t)));
+
+        // 3. 注册文本检索字段。
+        // title 和 sectionTitle 同时保留 text + keyword，
+        // 便于后续同时支持：
+        // 1）BM25 全文检索
+        // 2）术语型精确匹配
+        properties.put("title", Property.of(p -> p.text(t -> t
+                .fields("keyword", f -> f.keyword(k -> k.ignoreAbove(256)))
+        )));
+
         properties.put("content", Property.of(p -> p.text(t -> t)));
-        properties.put("sectionTitle", Property.of(p -> p.text(t -> t)));
+
+        properties.put("sectionTitle", Property.of(p -> p.text(t -> t
+                .fields("keyword", f -> f.keyword(k -> k.ignoreAbove(256)))
+        )));
         
         // 4. 注册标签与权限字段
         properties.put("tags", Property.of(p -> p.keyword(k -> k)));

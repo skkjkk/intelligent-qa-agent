@@ -2,8 +2,8 @@ package com.jujiu.agent.tool;
 
 import com.jujiu.agent.model.entity.Tool;
 import com.jujiu.agent.repository.ToolRepository;
-import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.SmartInitializingSingleton;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.ApplicationContext;
 import org.springframework.stereotype.Component;
@@ -37,7 +37,7 @@ import java.util.concurrent.ConcurrentHashMap;
  */
 @Component
 @Slf4j
-public class ToolRegistry {
+public class ToolRegistry implements SmartInitializingSingleton {
 
     @Autowired
     private ApplicationContext applicationContext;
@@ -50,15 +50,17 @@ public class ToolRegistry {
 
     // 缓存：工具名称 -> 数据库配置
     private final Map<String, Tool> toolConfigs = new ConcurrentHashMap<>();
-    
-    // 启动时加载
-    @PostConstruct
-    public void init() {
+
+    /**
+     * 在所有单例 Bean 初始化完成后执行工具注册。
+     */
+    @Override
+    public void afterSingletonsInstantiated() {
         log.info("[TOOL_REGISTRY] 开始初始化...");
-        // 1. 扫描所有代码实现的工具
+
         scanCodeImplementations();
         log.info("[TOOL_REGISTRY] 代码实现扫描完成，数量: {}", toolImplementations.size());
-        // 2. 加载数据库配置，并校验一致性
+
         loadDatabaseConfig();
         log.info("[TOOL_REGISTRY] 数据库配置加载完成");
     }
@@ -76,7 +78,10 @@ public class ToolRegistry {
         for (Tool dbTool : dbTools) {
             String className = dbTool.getClassName();
             AbstractTool implementation  = toolImplementations.get(className);
-    
+
+            log.info("[TOOL_REGISTRY] 校验数据库工具 - dbClassName={}, toolName={}, matched={}",
+                    className, dbTool.getToolName(), implementation != null);
+
             // 检查代码中是否存在对应的实现类
             if (implementation == null) {
                 log.error("[TOOL_REGISTRY] 数据库配置了未实现的工具，已跳过加载 - className={}, toolName={}",
@@ -106,12 +111,14 @@ public class ToolRegistry {
     private void scanCodeImplementations() {
         // 从 Spring 容器获取所有 AbstractTool 类型的 Bean
         Map<String, AbstractTool> beans = applicationContext.getBeansOfType(AbstractTool.class);
+        
         // 遍历所有工具实例并注册到映射表
         for (AbstractTool tool : beans.values()) {
             String className = tool.getClass().getName();
-            // 用 className 作为 Key，工具实例作为 Value
             toolImplementations.put(className, tool);
-            log.info("[TOOL_REGISTRY] 扫描到工具实现：{} -> {}", className, tool.getName());
+            
+            log.info("[TOOL_REGISTRY] 扫描到工具实现 - className={}, toolName={}",
+                    className, tool.getName());
         }
     }
     
@@ -125,12 +132,14 @@ public class ToolRegistry {
     public List<Tool> getEnabledTools() {
         // 存储启用的工具列表
         List<Tool> enabled = new ArrayList<>();
+        
         // 遍历所有工具配置，筛选出启用的工具
         for (Tool tool : toolConfigs.values()) {
             if (tool.getStatus() != null && tool.getStatus() == 1) {
                 enabled.add(tool);
             }
         }
+        
         return enabled;
     }
 
@@ -154,7 +163,7 @@ public class ToolRegistry {
     }
 
     /**
-     * 刷新配置（供管理接口调用）
+     * 刷新数据库配置。
      */
     public void refresh() {
         toolConfigs.clear();

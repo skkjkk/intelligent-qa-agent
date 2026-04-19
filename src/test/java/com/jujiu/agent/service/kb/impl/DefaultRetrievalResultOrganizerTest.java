@@ -61,7 +61,7 @@ class DefaultRetrievalResultOrganizerTest {
                 11L,
                 101L,
                 "ACL 设计文档",
-                "ACL 包括 READ、MANAGE、SHARE 三类权限。",
+                "ACL 包括 READ、rebuildFailedIndexes 是做什么的、SHARE 三类权限。",
                 0.95D,
                 1
         );
@@ -70,7 +70,7 @@ class DefaultRetrievalResultOrganizerTest {
                 11L,
                 101L,
                 "ACL 设计文档",
-                "ACL 包括 READ、MANAGE、SHARE 三类权限。",
+                "ACL 包括 READ、rebuildFailedIndexes 是做什么的、SHARE 三类权限。",
                 0.90D,
                 2
         );
@@ -147,7 +147,7 @@ class DefaultRetrievalResultOrganizerTest {
                 11L,
                 101L,
                 "ACL 设计文档",
-                "ACL 包括 READ、MANAGE、SHARE 三类权限。",
+                "ACL 包括 READ、rebuildFailedIndexes 是做什么的、SHARE 三类权限。",
                 0.95D,
                 1
         );

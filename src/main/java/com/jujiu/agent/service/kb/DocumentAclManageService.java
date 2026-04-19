@@ -38,7 +38,7 @@ public interface DocumentAclManageService {
      * @param documentId    文档 ID
      * @param principalType 主体类型，例如 USER、GROUP 等
      * @param principalId   主体标识，例如用户 ID
-     * @param permission    权限类型，例如 READ、MANAGE 等
+     * @param permission    权限类型，例如 READ、rebuildFailedIndexes 是做什么的 等
      */
     void revokeDocumentAcl(Long userId, Long documentId, String principalType, String principalId, String permission);
 }

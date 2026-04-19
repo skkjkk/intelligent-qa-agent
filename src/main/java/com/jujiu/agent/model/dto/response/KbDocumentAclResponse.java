@@ -33,8 +33,8 @@ public class KbDocumentAclResponse {
     /** 主体标识，例如用户 ID。 */
     @Schema(description = "主体标识，例如用户 ID")
     private String principalId;
-    /** 权限类型，例如 READ、MANAGE 等。 */
-    @Schema(description = "权限类型，例如 READ、MANAGE 等")
+    /** 权限类型，例如 READ、rebuildFailedIndexes 是做什么的 等。 */
+    @Schema(description = "权限类型，例如 READ、rebuildFailedIndexes 是做什么的 等")
     private String permission;
     /** 创建时间。 */
     @Schema(description = "创建时间")

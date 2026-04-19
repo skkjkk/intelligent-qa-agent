@@ -45,7 +45,7 @@ public class DocumentAccessExplainServiceImpl implements DocumentAccessExplainSe
     private static final String PERMISSION_READ = "READ";
 
     /** 权限类型：管理。 */
-    private static final String PERMISSION_MANAGE = "MANAGE";
+    private static final String PERMISSION_MANAGE = "rebuildFailedIndexes 是做什么的";
 
     /** 权限类型：共享。 */
     private static final String PERMISSION_SHARE = "SHARE";

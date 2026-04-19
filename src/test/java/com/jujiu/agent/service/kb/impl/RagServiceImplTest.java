@@ -45,8 +45,6 @@ class RagServiceImplTest {
 
     private VectorSearchService vectorSearchService;
     private DeepSeekClient deepSeekClient;
-    private KbQueryLogRepository kbQueryLogRepository;
-    private KbRetrievalTraceRepository kbRetrievalTraceRepository;
     private KnowledgeBaseProperties knowledgeBaseProperties;
     private ObjectMapper objectMapper;
     private ExecutorService chatExecutor;
@@ -59,8 +57,6 @@ class RagServiceImplTest {
         // 1. 初始化依赖 mock。
         vectorSearchService = mock(VectorSearchService.class);
         deepSeekClient = mock(DeepSeekClient.class);
-        kbQueryLogRepository = mock(KbQueryLogRepository.class);
-        kbRetrievalTraceRepository = mock(KbRetrievalTraceRepository.class);
         knowledgeBaseProperties = new KnowledgeBaseProperties();
         objectMapper = new ObjectMapper();
         chatExecutor = mock(ExecutorService.class);
@@ -70,9 +66,7 @@ class RagServiceImplTest {
         // 2. 构造被测对象。
         ragService = new RagServiceImpl(
                 vectorSearchService,
-                deepSeekClient,
-                kbQueryLogRepository,
-                kbRetrievalTraceRepository,
+                deepSeekClient, 
                 knowledgeBaseProperties,
                 objectMapper,
                 chatExecutor,
@@ -178,12 +172,12 @@ class RagServiceImplTest {
 
         // 2. 准备原始检索结果。
         List<ChunkSearchResult> rawResults = List.of(
-                buildChunkResult(11L, 101L, "ACL 设计文档", "ACL 包括 READ、MANAGE、SHARE 三类权限", 0.95D, 1)
+                buildChunkResult(11L, 101L, "ACL 设计文档", "ACL 包括 READ、rebuildFailedIndexes 是做什么的、SHARE 三类权限", 0.95D, 1)
         );
 
         // 3. 准备 organizer 整理后的结果。
         List<ChunkSearchResult> finalResults = List.of(
-                buildChunkResult(11L, 101L, "ACL 设计文档", "ACL 包括 READ、MANAGE、SHARE 三类权限", 0.95D, 1)
+                buildChunkResult(11L, 101L, "ACL 设计文档", "ACL 包括 READ、rebuildFailedIndexes 是做什么的、SHARE 三类权限", 0.95D, 1)
         );
 
         List<CitationResponse> citations = List.of(
@@ -191,7 +185,7 @@ class RagServiceImplTest {
                         .chunkId(11L)
                         .documentId(101L)
                         .documentTitle("ACL 设计文档")
-                        .snippet("ACL 包括 READ、MANAGE、SHARE 三类权限")
+                        .snippet("ACL 包括 READ、rebuildFailedIndexes 是做什么的、SHARE 三类权限")
                         .score(0.95D)
                         .rank(1)
                         .build()
@@ -204,7 +198,7 @@ class RagServiceImplTest {
                 .thenReturn(OrganizedRetrievalResult.builder()
                         .finalResults(finalResults)
                         .citations(citations)
-                        .context("[1] ACL 设计文档\nACL 包括 READ、MANAGE、SHARE 三类权限\n\n")
+                        .context("[1] ACL 设计文档\nACL 包括 READ、rebuildFailedIndexes 是做什么的、SHARE 三类权限\n\n")
                         .rawResultCount(1)
                         .finalResultCount(1)
                         .emptyReason("NONE")
@@ -212,7 +206,7 @@ class RagServiceImplTest {
 
         // 4. 准备模型返回。
         DeepSeekResult deepSeekResult = new DeepSeekResult();
-        deepSeekResult.setReply("ACL 包括 READ、MANAGE、SHARE 三类权限。");
+        deepSeekResult.setReply("ACL 包括 READ、rebuildFailedIndexes 是做什么的、SHARE 三类权限。");
         deepSeekResult.setPromptTokens(100);
         deepSeekResult.setCompletionTokens(50);
         deepSeekResult.setTotalTokens(150);
@@ -238,14 +232,14 @@ class RagServiceImplTest {
 
         // 6. 校验响应来自 organizer 产出的 citations。
         assertNotNull(response);
-        assertEquals("ACL 包括 READ、MANAGE、SHARE 三类权限。", response.getAnswer());
+        assertEquals("ACL 包括 READ、rebuildFailedIndexes 是做什么的、SHARE 三类权限。", response.getAnswer());
         assertEquals(1, response.getCitations().size());
 
         CitationResponse citation = response.getCitations().get(0);
         assertEquals(11L, citation.getChunkId());
         assertEquals(101L, citation.getDocumentId());
         assertEquals("ACL 设计文档", citation.getDocumentTitle());
-        assertEquals("ACL 包括 READ、MANAGE、SHARE 三类权限", citation.getSnippet());
+        assertEquals("ACL 包括 READ、rebuildFailedIndexes 是做什么的、SHARE 三类权限", citation.getSnippet());
 
         assertEquals(100, response.getPromptTokens());
         assertEquals(50, response.getCompletionTokens());

@@ -34,7 +34,7 @@ public class DocumentAclManageServiceImpl implements DocumentAclManageService {
     /** 读取权限标识。 */
     private static final String PERMISSION_READ = "READ";
     /** 管理权限标识。 */
-    private static final String PERMISSION_MANAGE = "MANAGE";
+    private static final String PERMISSION_MANAGE = "rebuildFailedIndexes 是做什么的";
     /** 分享权限标识。 */
     private static final String PERMISSION_SHARE = "SHARE";
     /** 主体类型：用户组。 */
@@ -170,7 +170,7 @@ public class DocumentAclManageServiceImpl implements DocumentAclManageService {
      * @param documentId    文档 ID
      * @param principalType 主体类型，例如 USER 等
      * @param principalId   主体标识，例如用户 ID
-     * @param permission    权限类型，例如 READ 或 MANAGE
+     * @param permission    权限类型，例如 READ 或 rebuildFailedIndexes 是做什么的
      */
     @Override
     @Transactional
@@ -266,7 +266,7 @@ public class DocumentAclManageServiceImpl implements DocumentAclManageService {
         if (!PERMISSION_READ.equalsIgnoreCase(permission)
                 && !PERMISSION_MANAGE.equalsIgnoreCase(permission)
                 && !PERMISSION_SHARE.equalsIgnoreCase(permission)) {
-            throw new BusinessException(ResultCode.INVALID_PARAMETER, "当前仅支持 READ、MANAGE 或 SHARE 权限");
+            throw new BusinessException(ResultCode.INVALID_PARAMETER, "当前仅支持 READ、rebuildFailedIndexes 是做什么的 或 SHARE 权限");
         }
     }
     

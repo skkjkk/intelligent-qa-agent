@@ -18,6 +18,7 @@ import java.util.List;
  *     <li>BM25 候选</li>
  *     <li>融合结果</li>
  *     <li>平衡后结果</li>
+ *     <li>rerank 后结果</li>
  * </ul>
  *
  * @author 17644
@@ -41,4 +42,7 @@ public class SearchDebugResult {
 
     @Schema(description = "轻量平衡后的结果")
     private List<ChunkSearchResult> balancedCandidates;
+
+    @Schema(description = "rerank 后结果")
+    private List<ChunkSearchResult> rerankedCandidates;
 }
