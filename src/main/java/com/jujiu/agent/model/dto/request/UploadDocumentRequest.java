@@ -23,8 +23,8 @@ public class UploadDocumentRequest implements Serializable {
     
     /** 文档标题；若为空，服务端使用原始文件名作为标题。 */
     private String title;
-    
-    /** 可见性：{@code PRIVATE}、{@code TEAM}、{@code PUBLIC}。 */
+
+    /** 可见性：{@code PRIVATE}、{@code PUBLIC}、{@code GROUP_SHARED}。 */
     private String visibility;
     
     /** 关联标签 ID 列表，可选。 */

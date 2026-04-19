@@ -116,17 +116,17 @@ public class KnowledgeBaseProperties {
         /**
          * 默认分块大小
          */
-        private Integer defaultSize = 500;
+        private Integer defaultSize = 700;
 
         /**
          * 默认重叠大小
          */
-        private Integer defaultOverlap = 50;
+        private Integer defaultOverlap = 80;
 
         /**
          * 最大分块大小
          */
-        private Integer maxSize = 1000;
+        private Integer maxSize = 1200;
     }
     
     @Data

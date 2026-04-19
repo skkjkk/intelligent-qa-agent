@@ -45,6 +45,36 @@ import java.util.stream.Collectors;
 @Slf4j
 public class VectorSearchServiceImpl implements VectorSearchService {
     
+    /** 默认候选池大小。 */
+    private static final int DEFAULT_CANDIDATE_TOP_K = 15;
+    
+    /** 默认最终候选池大小。 */
+    private static final int DEFAULT_FINAL_CANDIDATE_TOP_K = 8;
+
+    /** 正文完整 query 命中加分。 */
+    private static final double CONTENT_EXACT_MATCH_SCORE = 12D;
+
+    /** 标题完整 query 命中加分。 */
+    private static final double TITLE_EXACT_MATCH_SCORE = 8D;
+
+    /** 章节标题完整 query 命中加分。 */
+    private static final double SECTION_TITLE_EXACT_MATCH_SCORE = 6D;
+
+    /** 正文词项命中加分。 */
+    private static final double CONTENT_TERM_MATCH_SCORE = 2D;
+
+    /** 标题词项命中加分。 */
+    private static final double TITLE_TERM_MATCH_SCORE = 2D;
+
+    /** 章节标题词项命中加分。 */
+    private static final double SECTION_TITLE_TERM_MATCH_SCORE = 1.5D;
+
+    /** 过短 chunk 轻微降权值。 */
+    private static final double SHORT_CHUNK_PENALTY = 0.5D;
+
+    /** raw candidate 阶段单文档最多保留数量。 */
+    private static final int MAX_RAW_CANDIDATES_PER_DOCUMENT = 4;
+
     /** 向量化服务，用于将用户问题转换为查询向量。 */
     private final EmbeddingService embeddingService;
     
@@ -123,19 +153,46 @@ public class VectorSearchServiceImpl implements VectorSearchService {
 
         // 4. 将用户问题转换为查询向量
         float[] queryVector = embeddingService.embedQuery(question);
-     
-        // 5. 执行向量检索，并按文档范围过滤结果
-        List<ChunkSearchResult> vectorResults = vectorSearch(kbId, userId, question, queryVector, topK, documentIds);
+
+        // 5. 计算候选池大小和最终输出给 organizer 的 raw candidate 数量
+        int candidateTopK = getCandidateTopK(topK);
+        int finalCandidateTopK = getFinalCandidateTopK(topK);
+        
+        log.info("[KB][SEARCH][CANDIDATE] 检索候选池参数已确定 - kbId={}, userId={}, topK={}, candidateTopK={}, finalCandidateTopK={}",
+                kbId, userId, topK, candidateTopK, finalCandidateTopK);
+
+        // 6. 执行向量召回候选池检索，并再次按 ACL 文档范围做二次过滤。
+        List<ChunkSearchResult> vectorResults = vectorSearch(
+                kbId, 
+                userId, 
+                question, 
+                queryVector, 
+                candidateTopK, 
+                documentIds
+        );
         vectorResults = filterByDocumentScope(vectorResults, documentIds);
         
-        // 6. 执行关键词检索，并按文档范围过滤结果
-        List<ChunkSearchResult> keywordResults = keywordSearch(kbId, userId, question, topK, documentIds, documents);
+        // 7. 执行关键词召回候选池检索，并再次按 ACL 文档范围做二次过滤。
+        List<ChunkSearchResult> keywordResults = keywordSearch(
+                kbId, 
+                userId, 
+                question, 
+                candidateTopK, 
+                documentIds, 
+                documents);
         keywordResults = filterByDocumentScope(keywordResults, documentIds);
-        
-        // 7. 融合向量与关键词检索结果，取 topK 并重新赋排名
-        List<ChunkSearchResult> mergedResults = mergeResults(vectorResults, keywordResults, topK);
 
-        // 8. 记录检索耗时并返回结果
+        // 8. 将双路候选结果做融合排序，并输出给 organizer 使用的 raw candidates。
+        List<ChunkSearchResult> mergedResults = mergeResults(
+                vectorResults, 
+                keywordResults, 
+                finalCandidateTopK
+        );
+        
+        // 9. 对融合后的 raw candidates 执行轻量文档平衡，避免单文档过度占位。
+        List<ChunkSearchResult> balancedResults = balanceResultsByDocument(mergedResults);
+
+        // 10. 记录检索耗时并返回结果
         long latencyMs = System.currentTimeMillis() - startTime;
         log.info("[KB][SEARCH] 检索完成 - kbId={}, userId={}, vectorResultCount={}, keywordResultCount={}, mergedCount={}, latencyMs={}",
                 kbId, userId, vectorResults.size(), keywordResults.size(), mergedResults.size(), latencyMs);
@@ -292,9 +349,9 @@ public class VectorSearchServiceImpl implements VectorSearchService {
             sortedResults.get(i).setRank(i + 1);
         }
 
-        log.info("[KB][SEARCH][KEYWORD] 关键词检索完成 - kbId={}, userId={}, chunkCandidateCount={}, resultCount={}",
-                kbId, userId, chunks.size(), sortedResults.size());
-        
+        log.info("[KB][SEARCH][KEYWORD] 关键词检索完成 - kbId={}, userId={}, chunkCandidateCount={}, matchedCount={}, resultCount={}",
+                kbId, userId, chunks.size(), matchedResults.size(), sortedResults.size());
+
         return sortedResults;
     }
 
@@ -404,18 +461,21 @@ public class VectorSearchServiceImpl implements VectorSearchService {
     }
 
     /**
-     * 基于问题和分块数据构造检索结果。
+     * 基于问题和分块数据构造关键词检索结果。
      *
-     * <p>当前采用简单的文本匹配打分策略：
+     * <p>当前实现会统一计算以下维度的匹配分数：
      * <ul>
-     *     <li>完整问题命中加更高分</li>
-     *     <li>问题分词后按关键词命中累计加分</li>
-     *     <li>标题命中给予额外加分</li>
+     *     <li>完整 query 命中正文</li>
+     *     <li>完整 query 命中标题</li>
+     *     <li>完整 query 命中章节标题</li>
+     *     <li>词项命中正文</li>
+     *     <li>词项命中标题</li>
+     *     <li>词项命中章节标题</li>
      * </ul>
      *
-     * @param question   用户问题
-     * @param documents  文档列表
-     * @param chunks     分块列表
+     * @param question  用户问题
+     * @param documents 文档列表
+     * @param chunks    分块列表
      * @return 检索结果列表
      */
     private List<ChunkSearchResult> buildSearchResult(String question, 
@@ -457,56 +517,71 @@ public class VectorSearchServiceImpl implements VectorSearchService {
     }
 
     /**
-     * 计算分块命中分数。
+     * 计算关键词检索分数。
      *
-     * <p>当前采用轻量规则：
+     * <p>当前版本采用固定维度评分结构，目标不是做复杂检索学习排序，
+     * 而是提供一个稳定、可解释、可调优的第一版关键词候选打分模型。
+     *
+     * <p>评分维度包括：
      * <ul>
-     *     <li>正文包含完整问题：+10</li>
-     *     <li>标题包含完整问题：+6</li>
-     *     <li>每命中一个有效关键词：正文 +2，标题 +1</li>
-     *     <li>内容过短做轻微降权，避免噪声片段排太前</li>
+     *     <li>完整 query 命中正文</li>
+     *     <li>完整 query 命中标题</li>
+     *     <li>完整 query 命中章节标题</li>
+     *     <li>词项命中正文</li>
+     *     <li>词项命中标题</li>
+     *     <li>词项命中章节标题</li>
+     *     <li>过短 chunk 轻微降权</li>
      * </ul>
      *
-     * @param normalizedQuestion  标准化后的问题
-     * @param questionTerms       问题拆词结果
-     * @param document            文档对象
-     * @param chunk               分块对象
-     * @return 分数
+     * @param normalizedQuestion 标准化后的问题
+     * @param questionTerms      问题拆词结果
+     * @param document           文档对象
+     * @param chunk              分块对象
+     * @return 关键词检索分数
      */
     private Double calculateScore(String normalizedQuestion, 
                                   List<String> questionTerms, 
                                   KbDocument document, 
                                   KbChunk chunk) {
-        // 1. 对文档标题和分块内容做标准化
+        // 1. 对标题、章节标题和正文统一做标准化处理。
         String normalizedTitle = normalize(document.getTitle());
+        String normalizedSectionTitle = normalize(chunk.getSectionTitle());
         String normalizedContent = normalize(chunk.getContent());
         
         double score = 0D;
 
-        // 2. 完整问题命中加分（正文 +10，标题 +6）
+        // 2. 完整 query 命中优先于散词命中，优先拉开分值层次。
         if (!normalizedQuestion.isBlank()) {
             if (normalizedContent.contains(normalizedQuestion)) {
-                score += 10D;
+                score += CONTENT_EXACT_MATCH_SCORE;
             }
             if (normalizedTitle.contains(normalizedQuestion)) {
-                score += 6D;
+                score += TITLE_EXACT_MATCH_SCORE;
+            }
+            if (normalizedSectionTitle.contains(normalizedQuestion)) {
+                score += SECTION_TITLE_EXACT_MATCH_SCORE;
             }
         }
 
-        // 3. 关键词命中累计加分（正文每个 +2，标题每个 +1）
+        // 3. 词项命中作为补充分值，不取代完整命中的价值。
         for (String term : questionTerms) {
             if (normalizedContent.contains(term)) {
-                score += 2D;
+                score += CONTENT_TERM_MATCH_SCORE;
             }
             if (normalizedTitle.contains(term)) {
-                score += 1D;
+                score += TITLE_TERM_MATCH_SCORE;
+            }
+            if (normalizedSectionTitle.contains(term)) {
+                score += SECTION_TITLE_TERM_MATCH_SCORE;
             }
         }
 
-        // 4. 内容过短做轻微降权，并保证最终得分不小于 0
+        // 4. 内容过短的 chunk 一般证据承载能力较弱，做轻微降权，避免短噪声排太前。
         if (chunk.getCharCount() != null && chunk.getCharCount() < 20) {
-            score -= 0.5D;
+            score -= SHORT_CHUNK_PENALTY;
         }
+
+        // 5. 保证最终分数不小于 0。
         return Math.max(score, 0D);
     }
     
@@ -722,5 +797,104 @@ public class VectorSearchServiceImpl implements VectorSearchService {
         return results.stream()
                 .filter(item -> item.getDocumentId() != null && documentIds.contains(item.getDocumentId()))
                 .toList();
+    }
+
+    /**
+     * 计算检索候选池大小。
+     *
+     * <p>检索层最终版采用“两段式”策略：
+     * 先扩大候选召回范围，再做融合排序。
+     *
+     * @param topK 用户请求的最终结果数量
+     * @return 候选池大小
+     */
+    private int getCandidateTopK(Integer topK) {
+        if (topK == null || topK < 0) {
+            return DEFAULT_CANDIDATE_TOP_K;
+        }
+        return Math.max(topK * 3, DEFAULT_CANDIDATE_TOP_K);
+    }
+
+    /**
+     * 计算最终输出给 organizer 的 raw candidate 数量。
+     *
+     * <p>这里仍然不直接等于用户请求的 topK，
+     * 因为 organizer 后续还会做去重、裁剪和证据整理。
+     *
+     * @param topK 用户请求的最终结果数量
+     * @return raw candidate 数量
+     */
+    private int getFinalCandidateTopK(Integer topK) {
+        if (topK == null || topK <= 0) {
+            return DEFAULT_FINAL_CANDIDATE_TOP_K;
+        }
+        return Math.max(topK * 2, DEFAULT_FINAL_CANDIDATE_TOP_K);
+    }
+
+    /**
+     * 对融合后的 raw candidates 执行轻量文档平衡。
+     *
+     * <p>当前阶段的目标不是替代 organizer 做最终文档裁剪，
+     * 而是在检索层先避免单个文档过度占满候选位。
+     *
+     * <p>策略：
+     * <ul>
+     *     <li>结果已按融合分降序排列</li>
+     *     <li>遍历时优先保留高分结果</li>
+     *     <li>同一文档最多保留固定数量</li>
+     * </ul>
+     *
+     * <p>这样做的收益：
+     * <ul>
+     *     <li>提升候选来源多样性</li>
+     *     <li>减轻 organizer 后续整理压力</li>
+     *     <li>减少单文档重复证据过早占位</li>
+     * </ul>
+     *
+     * @param mergedResults 融合排序后的 raw candidates
+     * @return 轻量文档平衡后的 raw candidates
+     */
+    private List<ChunkSearchResult> balanceResultsByDocument(List<ChunkSearchResult> mergedResults) {
+        log.info("[KB][SEARCH][BALANCE] 开始执行 raw candidate 文档平衡 - inputCount={}, maxPerDocument={}",
+                mergedResults == null ? 0 : mergedResults.size(),
+                MAX_RAW_CANDIDATES_PER_DOCUMENT);
+        
+        // 1. 空结果直接返回，避免无意义遍历。
+        if (mergedResults == null || mergedResults.isEmpty()) {
+            return List.of();
+        }
+
+        List<ChunkSearchResult> balancedResults = new ArrayList<>();
+        // 初始化文档计数器，用于记录每个文档已保留数量。
+        Map<Long, Integer> documentCounter = new HashMap<>();
+        int droppedCount = 0;
+
+        for (ChunkSearchResult result : mergedResults) {
+            // 2. documentId 为空时无法参与文档平衡，当前阶段直接跳过。
+            if (result == null || result.getDocumentId() == null) {
+                droppedCount++;
+                continue;
+            }
+            
+            // 3. 计算当前文档已保留数量
+            int currentCount = documentCounter.getOrDefault(result.getDocumentId(), 0);
+            
+            // 4. 若当前文档已达到 raw candidate 阶段上限，则丢弃后续低分结果。
+            if (currentCount >= MAX_RAW_CANDIDATES_PER_DOCUMENT) {
+                droppedCount++;
+                log.debug("[KB][SEARCH][BALANCE] 单文档 raw candidate 数达到上限，丢弃结果 - documentId={}, chunkId={}, score={}",
+                        result.getDocumentId(), result.getChunkId(), result.getScore());
+                continue;
+            }
+
+            // 5. 保留当前结果并更新计数。
+            balancedResults.add(result);
+            documentCounter.put(result.getDocumentId(), currentCount + 1);
+        }
+        
+        log.info("[KB][SEARCH][BALANCE] raw candidate 文档平衡完成 - inputCount={}, outputCount={}, droppedCount={}, documentCount={}",
+                mergedResults.size(), balancedResults.size(), droppedCount, documentCounter.size());
+
+        return balancedResults;
     }
 }

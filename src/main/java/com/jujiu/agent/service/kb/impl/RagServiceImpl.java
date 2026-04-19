@@ -18,7 +18,9 @@ import com.jujiu.agent.repository.KbQueryLogRepository;
 import com.jujiu.agent.repository.KbRetrievalTraceRepository;
 import com.jujiu.agent.service.kb.QueryLogService;
 import com.jujiu.agent.service.kb.RagService;
+import com.jujiu.agent.service.kb.RetrievalResultOrganizer;
 import com.jujiu.agent.service.kb.VectorSearchService;
+import com.jujiu.agent.service.kb.model.OrganizedRetrievalResult;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
 import lombok.extern.slf4j.Slf4j;
@@ -99,6 +101,10 @@ public class RagServiceImpl implements RagService {
 
     /** 查询日志服务。 */
     private final QueryLogService queryLogService;
+
+    /** 检索结果整理器。 */
+    private final RetrievalResultOrganizer retrievalResultOrganizer;
+    
     /**
      * 构造 RAG 问答服务。
      *
@@ -118,6 +124,7 @@ public class RagServiceImpl implements RagService {
                           KnowledgeBaseProperties knowledgeBaseProperties,
                           ObjectMapper objectMapper,
                           ExecutorService chatExecutor,
+                          RetrievalResultOrganizer retrievalResultOrganizer,
                           QueryLogService queryLogService) {
         this.vectorSearchService = vectorSearchService;
         this.deepSeekClient = deepSeekClient;
@@ -126,6 +133,7 @@ public class RagServiceImpl implements RagService {
         this.knowledgeBaseProperties = knowledgeBaseProperties;
         this.objectMapper = objectMapper;
         this.chatExecutor = chatExecutor;
+        this.retrievalResultOrganizer = retrievalResultOrganizer;
         this.queryLogService = queryLogService;
     }
 
@@ -136,7 +144,7 @@ public class RagServiceImpl implements RagService {
      *
      * @param userId  当前用户 ID
      * @param request 知识库问答请求
-     * @return 知识库问答响应结果
+     * @return 知识库问答响应结果/
      */
     @Override
     @Transactional
@@ -160,30 +168,49 @@ public class RagServiceImpl implements RagService {
                 request.getQuestion(),
                 topK);
 
-        // 4. 处理零命中场景
-        if (searchResults == null || searchResults.isEmpty()) {
+        // 4. 对原始候选结果执行统一整理，统一生成最终上下文与引用。
+        //    这样后续 query / stream / 工具 / 显式知识增强都可以复用同一套逻辑。
+        OrganizedRetrievalResult organizedResult = retrievalResultOrganizer.organize(
+                searchResults, 
+                request.getQuestion()
+        );
+        
+        // 5. 若整理后仍无可用结果，则按统一空结果语义返回。
+        if (organizedResult.getFinalResults() == null || organizedResult.getFinalResults().isEmpty()) {
             logAclAwareEmptyResult(userId, kbId, "KB_API");
+            log.info("[KB][QUERY][ORGANIZE] 检索整理后无可用结果 - kbId={}, userId={}, rawResultCount={}, emptyReason={}",
+                    kbId,
+                    userId,
+                    organizedResult.getRawResultCount(),
+                    organizedResult.getEmptyReason());
+
             return handleEmptyResult(userId, kbId, request, topK, startTime);
         }
 
-        // 5. 构造引用列表、知识库上下文与 Prompt
-        List<CitationResponse> citations = buildCitation(searchResults);
-        String context = buildContext(searchResults);
+        // 6. 从整理结果中统一读取 citations 和 context，避免各链路重复组装。
+        List<CitationResponse> citations = organizedResult.getCitations();
+        String context = organizedResult.getContext();
         List<DeepSeekMessage> messages = buildPromptMessages(request.getQuestion(), context);
 
-        log.info("[KB][QUERY] 检索结果已完成组装，开始调用模型生成答案 - kbId={}, userId={}, citationCount={}",
-                kbId, userId, citations.size());
+        log.info("[KB][QUERY][ORGANIZE] 检索结果整理完成并准备调用模型 - kbId={}, userId={}, rawResultCount={}, finalResultCount={}, citationCount={}, contextLength={}",
+                kbId,
+                userId,
+                organizedResult.getRawResultCount(),
+                organizedResult.getFinalResultCount(),
+                citations == null ? 0 : citations.size(),
+                context == null ? 0 : context.length()
+        );
 
-        // 6. 调用 DeepSeek 生成答案
+        // 7. 调用 DeepSeek 生成答案
         DeepSeekResult deepSeekResult = deepSeekClient.chat(messages);
 
-        // 7. 计算耗时
+        // 8. 计算耗时
         long latencyMs = System.currentTimeMillis() - startTime;
         log.info("[KB][QUERY] 知识库问答完成 - kbId={}, userId={}, topK={}, questionLength={}, latencyMs={}",
                 kbId, userId, topK, request.getQuestion().length(), latencyMs
         );
 
-        // 8. 保存查询日志与检索轨迹
+        // 9. 保存查询日志与检索轨迹
         KbQueryLog queryLog = queryLogService.saveQueryLog(
                 userId,
                 kbId,
@@ -195,9 +222,9 @@ public class RagServiceImpl implements RagService {
                 DEFAULT_QUERY_STATUS_SUCCESS,
                 null
         );
-        queryLogService.saveRetrievalTrace(queryLog.getId(), searchResults);
+        queryLogService.saveRetrievalTrace(queryLog.getId(), organizedResult.getFinalResults());
 
-        // 9. 封装并返回响应结果
+        // 10. 封装并返回响应结果
         return KnowledgeQueryResponse.builder()
                 .answer(deepSeekResult.getReply())
                 .citations(citations)
@@ -237,26 +264,31 @@ public class RagServiceImpl implements RagService {
         log.info("[KB][CONTEXT] 开始构造知识上下文 - kbId={}, userId={}, topK={}, questionLength={}",
                 targetKbId, userId, targetTopK, question.length());
 
-        // 3. 执行向量检索
+        // 3. 执行检索，获取原始结果。
         List<ChunkSearchResult> searchResults = vectorSearchService.search(
                 targetKbId,
                 userId,
                 question,
                 targetTopK);
 
-        // 4. 处理零命中场景
-        if (searchResults == null || searchResults.isEmpty()) {
+        // 4. 统一整理检索结果，确保聊天显式知识增强与 kb/query 共用同一套上下文生成逻辑。
+        OrganizedRetrievalResult organizedResult = retrievalResultOrganizer.organize(
+                searchResults, 
+                question);
+
+        // 5. 若整理后无结果，则返回空字符串，保持当前聊天增强链路兼容。
+        if (organizedResult.getFinalResults() == null || organizedResult.getFinalResults().isEmpty()) {
             logAclAwareEmptyResult(userId, kbId, "KB_API");
+            log.info("[KB][CONTEXT][ORGANIZE] 知识上下文整理后为空 - kbId={}, userId={}, rawResultCount={}, emptyReason={}",
+                    targetKbId,
+                    userId,
+                    organizedResult.getRawResultCount(),
+                    organizedResult.getEmptyReason());
             return "";
         }
-
-        // 5. 拼接并返回上下文
-        String context = buildContext(searchResults);
-
-        log.info("[KB][CONTEXT] 知识上下文构造完成 - kbId={}, userId={}, resultCount={}, contextLength={}",
-                targetKbId, userId, searchResults.size(), context.length());
-
-        return context;
+        
+        // 6. 返回统一整理后的上下文。
+        return organizedResult.getContext();
     }
 
     /**
@@ -285,7 +317,7 @@ public class RagServiceImpl implements RagService {
                 log.info("[KB][QUERY][STREAM] 开始执行知识库流式问答 - kbId={}, userId={}, topK={}, questionLength={}",
                         kbId, userId, topK, request.getQuestion().length());
 
-                // 3. 执行向量检索
+                // 3. 执行检索，获取原始候选结果。
                 List<ChunkSearchResult> searchResults = vectorSearchService.search(
                         kbId,
                         userId,
@@ -293,9 +325,22 @@ public class RagServiceImpl implements RagService {
                         topK
                 );
 
-                // 4. 处理零命中场景：发送提示消息并结束流
-                if (searchResults == null || searchResults.isEmpty()) {
+                // 4. 对检索结果执行统一整理，确保流式问答和同步问答使用同一套上下文/引用逻辑。
+                OrganizedRetrievalResult organizedResult = retrievalResultOrganizer.organize(
+                        searchResults,
+                        request.getQuestion()
+                );
+                
+                // 5. 若整理后没有可用结果，则返回统一空回答并结束流。
+                if (organizedResult.getFinalResults() == null || organizedResult.getFinalResults().isEmpty()) {
                     logAclAwareEmptyResult(userId, kbId, "KB_API_STREAM");
+                    
+                    log.info("[KB][QUERY][STREAM][ORGANIZE] 检索整理后无可用结果 - kbId={}, userId={}, rawResultCount={}, emptyReason={}",
+                            kbId,
+                            userId,
+                            organizedResult.getRawResultCount(),
+                            organizedResult.getEmptyReason()
+                    );
 
                     emitter.send(SseEmitter.event()
                             .name("message")
@@ -308,15 +353,21 @@ public class RagServiceImpl implements RagService {
                     return;
                 }
 
-                // 5. 组装引用、上下文与 Prompt
-                List<CitationResponse> citations = buildCitation(searchResults);
-                String context = buildContext(searchResults);
+                // 6. 从统一整理结果中获取 citations 与 context。
+                List<CitationResponse> citations = organizedResult.getCitations();
+                String context = organizedResult.getContext();
                 List<DeepSeekMessage> messages = buildPromptMessages(request.getQuestion(), context);
 
-                log.info("[KB][QUERY][STREAM] 检索结果已完成组装，开始流式调用模型 - kbId={}, userId={}, citationCount={}",
-                        kbId, userId, citations.size());
+                log.info("[KB][QUERY][STREAM][ORGANIZE] 检索结果整理完成并准备流式调用模型 - kbId={}, userId={}, rawResultCount={}, finalResultCount={}, citationCount={}, contextLength={}",
+                        kbId,
+                        userId,
+                        organizedResult.getRawResultCount(),
+                        organizedResult.getFinalResultCount(),
+                        citations == null ? 0 : citations.size(),
+                        context == null ? 0 : context.length()
+                );
 
-                // 6. 流式消费模型输出并按策略推送
+                // 7. 流式消费模型输出并按策略推送
                 StringBuilder answerBuilder = new StringBuilder();
                 StringBuilder chunkBuffer = new StringBuilder();
                 int pushCount = 0;
@@ -344,7 +395,7 @@ public class RagServiceImpl implements RagService {
                     }
                 }
 
-                // 7. 推送缓冲区剩余内容
+                // 8. 推送缓冲区剩余内容
                 if (!chunkBuffer.isEmpty()) {
                     String output = chunkBuffer.toString();
                     pushCount++;
@@ -357,7 +408,7 @@ public class RagServiceImpl implements RagService {
                             .data(output));
                 }
 
-                // 8. 发送完成事件并关闭流
+                // 9. 发送完成事件并关闭流
                 emitter.send(SseEmitter.event()
                         .name("done")
                         .data("STREAM_FINISHED"));
@@ -368,7 +419,7 @@ public class RagServiceImpl implements RagService {
                         kbId, userId, answerBuilder.length(), latencyMs);
 
             } catch (Exception e) {
-                // 9. 异常处理：记录日志、推送错误事件、关闭流
+                // 10. 异常处理：记录日志、推送错误事件、关闭流
                 long latencyMs = System.currentTimeMillis() - startTime;
                 log.error("[KB][QUERY][STREAM] 知识库流式问答失败 - kbId={}, userId={}, latencyMs={}",
                         kbId, userId, latencyMs, e);
@@ -386,7 +437,7 @@ public class RagServiceImpl implements RagService {
             }
         });
 
-        // 10. 返回 SSE 发射器
+        // 11. 返回 SSE 发射器
         return emitter;
     }
 
@@ -581,34 +632,7 @@ public class RagServiceImpl implements RagService {
             4. 如果引用资料，可标注[1][2]
             """;
     }
-
-    /**
-     * 构造知识库上下文。
-     *
-     * <p>当前采用编号拼接方式组织上下文，
-     * 便于模型引用与前端溯源。
-     *
-     * @param searchResults 检索结果
-     * @return 上下文文本
-     */
-    private String buildContext(List<ChunkSearchResult> searchResults) {
-        StringBuilder builder = new StringBuilder();
-        for (int i = 0; i < searchResults.size(); i++) {
-            ChunkSearchResult searchResult = searchResults.get(i);
-            builder.append("[").append(i + 1).append("] ")
-                    .append(searchResult.getDocumentTitle())
-                    .append("\n")
-                    .append(searchResult.getContent())
-                    .append("\n\n");
-        }
-        String context = builder.toString();
-        
-        log.info("[KB][QUERY] 上下文构造完成 - resultCount={}, contextLength={}",
-                searchResults == null ? 0 : searchResults.size(), context.length());
-
-        return context;
-    }
-
+    
     /**
      * 处理零命中场景。
      *
@@ -647,32 +671,6 @@ public class RagServiceImpl implements RagService {
                 .totalTokens(0)
                 .latencyMs(latencyMs)
                 .build();
-    }
-
-    /**
-     * 构造引用列表。
-     *
-     * @param searchResults 检索结果
-     * @return 引用响应列表
-     */
-    private List<CitationResponse> buildCitation(List<ChunkSearchResult> searchResults) {
-        List<CitationResponse> citations = new ArrayList<>();
-        for (ChunkSearchResult searchResult : searchResults) {
-            citations.add(
-                    CitationResponse.builder()
-                            .chunkId(searchResult.getChunkId())
-                            .documentId(searchResult.getDocumentId())
-                            .documentTitle(searchResult.getDocumentTitle())
-                            .snippet(searchResult.getContent())
-                            .score(searchResult.getScore())
-                            .rank(searchResult.getRank())
-                            .build()
-            );
-        }
-        
-        log.info("[KB][QUERY] 引用构造完成 - citationCount={}", citations.size());
-
-        return citations;
     }
     
     /**
