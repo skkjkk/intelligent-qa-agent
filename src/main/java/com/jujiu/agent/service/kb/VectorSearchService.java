@@ -1,6 +1,7 @@
 package com.jujiu.agent.service.kb;
 
 import com.jujiu.agent.common.result.ChunkSearchResult;
+import com.jujiu.agent.service.kb.model.SearchDebugResult;
 
 import java.util.List;
 
@@ -28,4 +29,18 @@ public interface VectorSearchService {
      * @return 检索结果列表
      */
     List<ChunkSearchResult> search(Long kbId, Long userId, String question, Integer topK);
+
+    /**
+     * 执行检索调试。
+     *
+     * <p>返回检索层中间态结果，不进入模型生成阶段。
+     *
+     * @param kbId     知识库 ID
+     * @param userId   当前用户 ID
+     * @param question 用户问题
+     * @param topK     最终目标 topK
+     * @return 检索调试结果
+     */
+    SearchDebugResult debugSearch(Long kbId, Long userId, String question, Integer topK);
+
 }

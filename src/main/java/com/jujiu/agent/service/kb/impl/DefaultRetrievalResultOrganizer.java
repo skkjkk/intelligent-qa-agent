@@ -79,6 +79,12 @@ public class DefaultRetrievalResultOrganizer implements RetrievalResultOrganizer
 
     /** 空结果原因：整理后全部被过滤。 */
     private static final String EMPTY_REASON_ALL_FILTERED = "ALL_FILTERED_AFTER_ORGANIZE";
+    
+    /** 最终最多保留的结果数量。 */
+    private static final int MAX_FINAL_RESULTS = 5;
+
+    /** 最终上下文最大长度。 */
+    private static final int MAX_CONTEXT_LENGTH = 1600;
 
     /**
      * 对原始检索结果执行统一整理。
@@ -129,10 +135,13 @@ public class DefaultRetrievalResultOrganizer implements RetrievalResultOrganizer
         // 4. 限制同一文档最多保留的 chunk 数，避免单文档结果霸榜，影响上下文多样性。
         List<ChunkSearchResult> limitedResults = limitChunksPerDocument(nearDeduplicatedResults);
 
-        // 5. 对整理后的候选结果重新按得分排序，并重新赋 rank，确保后续 citation/context 口径一致。
-        List<ChunkSearchResult> finalResults = sortAndReRank(limitedResults);
-        
-        // 6. 若整理后没有结果，返回统一空结构并记录原因。
+        // 5. 对整理后的候选结果按得分重排。
+        List<ChunkSearchResult> rerankedResults = sortAndReRank(limitedResults);
+
+        // 6. 在最终输出前再做一次全局数量裁剪，避免最终证据集过胖。
+        List<ChunkSearchResult> finalResults = limitFinalResults(rerankedResults, MAX_FINAL_RESULTS);
+
+        // 7. 若整理后没有结果，返回统一空结构并记录原因。
         if (finalResults.isEmpty()) {
             log.info("[KB][RETRIEVAL][ORGANIZE] 检索结果在整理后为空 - rawResultCount={}, emptyReason={}",
                     rawCount, EMPTY_REASON_ALL_FILTERED);
@@ -146,12 +155,12 @@ public class DefaultRetrievalResultOrganizer implements RetrievalResultOrganizer
                     .emptyReason(EMPTY_REASON_ALL_FILTERED)
                     .build();
         }
-        
-        // 7. 基于最终候选结果统一生成 citation，避免各链路各自构造引用。
+
+        // 8. 基于最终候选统一生成 citation。
         List<CitationResponse> citations = buildCitations(finalResults, question);
 
-        // 8. 基于同一批最终候选统一生成 context，确保“给模型的上下文”和“给前端的引用”一致。
-        String context = buildContext(finalResults, question);
+// 9. 基于同一批最终候选构造有长度预算的 context。
+        String context = buildContextWithBudget(finalResults, question, MAX_CONTEXT_LENGTH);
 
         log.info("[KB][RETRIEVAL][ORGANIZE] 检索结果整理完成 - rawResultCount={}, finalResultCount={}, citationCount={}, contextLength={}",
                 rawCount, finalResults.size(), citations.size(), context.length());
@@ -548,46 +557,59 @@ public class DefaultRetrievalResultOrganizer implements RetrievalResultOrganizer
     }
 
     /**
-     * 统一构造最终 Prompt 上下文。
+     * 构造带长度预算的最终上下文。
      *
-     * <p>这里仍沿用当前项目已经在使用的编号结构：
-     * <pre>
-     * [1] 文档标题
-     * 片段内容
-     * </pre>
-     *
-     * <p>这样做的好处是：
+     * <p>目标：
      * <ul>
-     *     <li>兼容你现在已有 Prompt 模板</li>
-     *     <li>兼容前端和回答中的 [1][2] 编号习惯</li>
-     *     <li>后续升级成本低</li>
+     *     <li>上下文只来自最终证据集</li>
+     *     <li>避免 context 无限制变长</li>
+     *     <li>优先保留前排高价值证据</li>
      * </ul>
      *
-     * @param finalResults 整理后的最终候选
-     * @param question     用户问题
+     * @param finalResults      最终候选结果
+     * @param question          用户问题
+     * @param maxContextLength  上下文最大长度
      * @return 上下文文本
      */
-    private String buildContext(List<ChunkSearchResult> finalResults, String question) {
-        log.info("[KB][RETRIEVAL][CONTEXT] 开始构造最终上下文 - finalResultCount={}", finalResults.size());
-
-        StringBuilder builder = new StringBuilder();
+    private String buildContextWithBudget(List<ChunkSearchResult> finalResults, 
+                                          String question, 
+                                          int maxContextLength) {
+        log.info("[KB][RETRIEVAL][CONTEXT] 开始构造带预算的最终上下文 - finalResultCount={}, maxContextLength={}",
+                finalResults == null ? 0 : finalResults.size(), maxContextLength);
         
-        for (int i = 0; i < finalResults.size(); i++) {
-            ChunkSearchResult finalResult  = finalResults.get(i);
-            // 1. 统一走 snippet 构造逻辑，避免 context 和 citation 内容来源不一致。
-            String snippet = buildSnippet(finalResult.getContent(), question);
-            
-            builder.append("[")
-                    .append(i + 1)
-                    .append("] ")
-                    .append(finalResult.getDocumentTitle() == null ? "未命名文档" : finalResult.getDocumentTitle())
-                    .append("\n")
-                    .append(snippet)
-                    .append("\n\n");
+        if (finalResults == null || finalResults.isEmpty()) {
+            return "";
         }
+        StringBuilder builder = new StringBuilder();
+
+        for (int i = 0; i < finalResults.size(); i++) {
+            ChunkSearchResult finalResult = finalResults.get(i);
+            String snippet = buildSnippet(finalResult.getContent(), question);
+
+            String block = "["
+                    + (i + 1)
+                    + "] "
+                    + (finalResult.getDocumentTitle() == null ? "未命名文档" : finalResult.getDocumentTitle())
+                    + "\n"
+                    + snippet
+                    + "\n\n";
+
+            // 若追加后超过预算，则停止，优先保留高排位证据。
+            if (!builder.isEmpty() && builder.length() + block.length() > maxContextLength) {
+                log.info("[KB][RETRIEVAL][CONTEXT] 上下文达到预算上限，停止追加 - currentLength={}, nextBlockLength={}, maxContextLength={}",
+                        builder.length(), block.length(), maxContextLength);
+                break;
+            }
+
+            // 若当前为空但首块本身已超预算，仍允许保留首块，避免 context 为空。
+            if (builder.isEmpty() || builder.length() + block.length() <= maxContextLength) {
+                builder.append(block);
+            }
+        }
+
         String context = builder.toString();
-        
-        log.info("[KB][RETRIEVAL][CONTEXT] 最终上下文构造完成 - contextLength={}", context.length());
+
+        log.info("[KB][RETRIEVAL][CONTEXT] 带预算上下文构造完成 - contextLength={}", context.length());
 
         return context;
     }
@@ -736,4 +758,44 @@ public class DefaultRetrievalResultOrganizer implements RetrievalResultOrganizer
                 .distinct()
                 .toList();
     }
+
+    /**
+     * 对最终结果数量执行全局裁剪。
+     *
+     * <p>该步骤位于：
+     * <ul>
+     *     <li>去重之后</li>
+     *     <li>单文档限制之后</li>
+     *     <li>最终 citation/context 生成之前</li>
+     * </ul>
+     *
+     * <p>目标是把“候选结果”进一步收敛成“最终证据集”，
+     * 避免最终返回过多引用、过长上下文和过多噪声结果。
+     *
+     * @param results     已重排结果
+     * @param maxResults  最终最大保留数量
+     * @return 裁剪后的最终结果
+     */
+    private List<ChunkSearchResult> limitFinalResults(List<ChunkSearchResult> results, int maxResults) {
+        log.info("[KB][RETRIEVAL][FINAL_LIMIT] 开始执行最终结果裁剪 - inputCount={}, maxResults={}",
+                results == null ? 0 : results.size(), maxResults);
+
+        if (results == null || results.isEmpty()) {
+            return List.of();
+        }
+
+        List<ChunkSearchResult> limitedResults = results.stream()
+                .limit(maxResults)
+                .toList();
+
+        // 重新赋 rank，确保最终 citations/context 序号一致。
+        for (int i = 0; i < limitedResults.size(); i++) {
+            limitedResults.get(i).setRank(i + 1);
+        }
+
+        log.info("[KB][RETRIEVAL][FINAL_LIMIT] 最终结果裁剪完成 - outputCount={}", limitedResults.size());
+
+        return limitedResults;
+    }
+
 }

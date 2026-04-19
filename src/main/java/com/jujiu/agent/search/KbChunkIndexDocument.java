@@ -58,9 +58,9 @@ public class KbChunkIndexDocument {
 
 
     /**
-     * 所属章节标题。
+     * 所属章节标题，辅助检索和展示上下文信息。
      */
-    @Schema(description = "所属章节标题")
+    @Schema(description = "所属章节标题", example = "第1章")
     private String sectionTitle;
 
 

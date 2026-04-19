@@ -11,6 +11,7 @@ import com.jujiu.agent.config.KnowledgeBaseProperties;
 import com.jujiu.agent.model.dto.deepseek.DeepSeekMessage;
 import com.jujiu.agent.model.dto.request.QueryKnowledgeBaseRequest;
 import com.jujiu.agent.model.dto.response.CitationResponse;
+import com.jujiu.agent.model.dto.response.KnowledgeQueryDebugResponse;
 import com.jujiu.agent.model.dto.response.KnowledgeQueryResponse;
 import com.jujiu.agent.model.entity.KbQueryLog;
 import com.jujiu.agent.model.entity.KbRetrievalTrace;
@@ -21,6 +22,7 @@ import com.jujiu.agent.service.kb.RagService;
 import com.jujiu.agent.service.kb.RetrievalResultOrganizer;
 import com.jujiu.agent.service.kb.VectorSearchService;
 import com.jujiu.agent.service.kb.model.OrganizedRetrievalResult;
+import com.jujiu.agent.service.kb.model.SearchDebugResult;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
 import lombok.extern.slf4j.Slf4j;
@@ -289,6 +291,65 @@ public class RagServiceImpl implements RagService {
         
         // 6. 返回统一整理后的上下文。
         return organizedResult.getContext();
+    }
+
+    /**
+     * 执行知识库问答调试。
+     *
+     * <p>该方法不会调用大模型，只返回：
+     * <ul>
+     *     <li>检索层中间态结果</li>
+     *     <li>organizer 最终结果</li>
+     *     <li>citation/context/emptyReason</li>
+     * </ul>
+     *
+     * @param userId  当前用户 ID
+     * @param request 请求参数
+     * @return 调试响应
+     */
+    @Override
+    public KnowledgeQueryDebugResponse debugQuery(Long userId, QueryKnowledgeBaseRequest request) {
+        // 1. 复用现有参数校验逻辑。
+        validateRequest(userId, request);
+
+        Long kbId = request.getKbId() == null ? 1L : request.getKbId();
+        Integer topK = request.getTopK() == null ? 5 : request.getTopK();
+
+        log.info("[KB][QUERY][DEBUG] 开始执行知识库调试问答 - kbId={}, userId={}, topK={}, questionLength={}",
+                kbId, userId, topK, request.getQuestion().length());
+
+        // 2. 获取检索层中间态结果。
+        SearchDebugResult searchDebugResult = vectorSearchService.debugSearch(
+                kbId,
+                userId,
+                request.getQuestion(),
+                topK
+        );
+
+        // 3. organizer 继续基于 balancedCandidates 生成最终证据结果。
+        OrganizedRetrievalResult organizedResult = retrievalResultOrganizer.organize(
+                searchDebugResult.getBalancedCandidates(),
+                request.getQuestion()
+        );
+
+        log.info("[KB][QUERY][DEBUG] 知识库调试问答完成 - kbId={}, userId={}, finalResultCount={}, citationCount={}, emptyReason={}",
+                kbId,
+                userId,
+                organizedResult.getFinalResultCount(),
+                organizedResult.getCitations() == null ? 0 : organizedResult.getCitations().size(),
+                organizedResult.getEmptyReason());
+
+        // 4. 返回完整调试视图。
+        return KnowledgeQueryDebugResponse.builder()
+                .vectorCandidates(searchDebugResult.getVectorCandidates())
+                .bm25Candidates(searchDebugResult.getBm25Candidates())
+                .mergedCandidates(searchDebugResult.getMergedCandidates())
+                .balancedCandidates(searchDebugResult.getBalancedCandidates())
+                .finalResults(organizedResult.getFinalResults())
+                .citations(organizedResult.getCitations())
+                .context(organizedResult.getContext())
+                .emptyReason(organizedResult.getEmptyReason())
+                .build();
     }
 
     /**

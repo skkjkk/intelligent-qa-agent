@@ -4,6 +4,7 @@ import com.jujiu.agent.common.result.Result;
 import com.jujiu.agent.model.dto.request.QueryFeedbackRequest;
 import com.jujiu.agent.model.dto.request.QueryKnowledgeBaseRequest;
 import com.jujiu.agent.model.dto.response.KbQueryHistoryResponse;
+import com.jujiu.agent.model.dto.response.KnowledgeQueryDebugResponse;
 import com.jujiu.agent.model.dto.response.KnowledgeQueryResponse;
 import com.jujiu.agent.service.kb.QueryLogService;
 import com.jujiu.agent.service.kb.RagService;
@@ -107,6 +108,24 @@ public class KnowledgeQueryController {
         queryLogService.saveFeedback(userId, queryLogId, request);
         return Result.success(null, "反馈提交成功");
     }
+
+    /**
+     * 知识库问答调试接口。
+     *
+     * <p>该接口用于调试 RAG 检索与 organizer 中间态，
+     * 不进入模型生成阶段。
+     *
+     * @param request 调试请求
+     * @return 调试结果
+     */
+    @PostMapping("/debug")
+    @Operation(summary = "知识库问答调试", description = "返回 RAG 检索链路中间态结果，不调用模型")
+    public Result<KnowledgeQueryDebugResponse> debugQuery(@RequestBody @Valid QueryKnowledgeBaseRequest request) {
+        Long userId = getCurrentUserId();
+        KnowledgeQueryDebugResponse response = ragService.debugQuery(userId, request);
+        return Result.success(response);
+    }
+
 }
 
 

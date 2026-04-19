@@ -1,6 +1,7 @@
 package com.jujiu.agent.service.kb;
 
 import com.jujiu.agent.model.dto.request.QueryKnowledgeBaseRequest;
+import com.jujiu.agent.model.dto.response.KnowledgeQueryDebugResponse;
 import com.jujiu.agent.model.dto.response.KnowledgeQueryResponse;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
@@ -44,11 +45,22 @@ public interface RagService {
     /**
      * 构造知识库增强上下文。
      *
-     * @param userId 当前用户 ID
-     * @param kbId 知识库 ID
+     * @param userId   当前用户 ID
+     * @param kbId     知识库 ID
      * @param question 用户问题
-     * @param topK 检索数量
+     * @param topK     检索数量
      * @return 知识库上下文文本
      */
     String buildKnowledgeContext(Long userId, Long kbId, String question, Integer topK);
+
+    /**
+     * 执行知识库问答调试。
+     *
+     * <p>该方法不调用大模型，只返回检索与 organizer 中间态结果。
+     *
+     * @param userId  当前用户 ID
+     * @param request 请求参数
+     * @return 调试结果
+     */
+    KnowledgeQueryDebugResponse debugQuery(Long userId, QueryKnowledgeBaseRequest request);
 }
