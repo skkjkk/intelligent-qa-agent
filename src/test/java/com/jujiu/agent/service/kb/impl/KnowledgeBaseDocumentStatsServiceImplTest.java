@@ -8,82 +8,105 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import java.time.ZoneId;
 import java.util.List;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
 
-/**
- * 知识库文档统计服务单元测试。
- *
- * <p>用于验证文档状态统计、文件类型统计与分块数量汇总逻辑。
- *
- * @author 17644
- * @version 1.0.0
- * @since 2026/4/11
- */
 class KnowledgeBaseDocumentStatsServiceImplTest {
 
     private KbDocumentRepository kbDocumentRepository;
-    private KnowledgeBaseDocumentStatsServiceImpl documentStatsService;
+    private KnowledgeBaseDocumentStatsServiceImpl service;
 
     @BeforeEach
     void setUp() {
         kbDocumentRepository = mock(KbDocumentRepository.class);
-        documentStatsService = new KnowledgeBaseDocumentStatsServiceImpl(kbDocumentRepository);
+        service = new KnowledgeBaseDocumentStatsServiceImpl(kbDocumentRepository);
     }
 
     @Test
-    @DisplayName("getDocumentStats 应正确汇总文档统计结果")
-    void shouldReturnCorrectDocumentStats() {
+    @DisplayName("getDocumentStats 应正确返回文档统计+分布+趋势")
+    void shouldReturnDocumentStatsWithDistributionAndTrend() {
         Long userId = 1001L;
         Long kbId = 1L;
 
         when(kbDocumentRepository.selectCount(any())).thenReturn(
-                3L, // totalDocuments
-                2L, // successDocuments
-                1L, // processingDocuments
-                0L, // failedDocuments
-                1L, // pdfDocuments
-                0L, // docxDocuments
-                1L, // mdDocuments
-                1L, // txtDocuments
-                0L  // htmlDocuments
+                6L, // total
+                4L, // success
+                1L, // processing
+                1L, // failed
+                2L, // pdf
+                1L, // docx
+                1L, // md
+                1L, // txt
+                1L  // html
         );
 
-        List<KbDocument> documents = List.of(
+        when(kbDocumentRepository.selectList(any())).thenReturn(List.of(
                 KbDocument.builder().chunkCount(10).build(),
                 KbDocument.builder().chunkCount(20).build(),
                 KbDocument.builder().chunkCount(30).build()
-        );
-        when(kbDocumentRepository.selectList(any())).thenReturn(documents);
+        ));
 
-        KbDocumentStatsResponse result = documentStatsService.getDocumentStats(userId, kbId);
+        when(kbDocumentRepository.aggregateByFileType(userId, kbId)).thenReturn(List.of(
+                Map.of("dimName", "pdf", "dimCount", 2L),
+                Map.of("dimName", "docx", "dimCount", 1L)
+        ));
+
+        when(kbDocumentRepository.aggregateByStatus(userId, kbId)).thenReturn(List.of(
+                Map.of("dimName", "SUCCESS", "dimCount", 4L),
+                Map.of("dimName", "FAILED", "dimCount", 1L)
+        ));
+
+        when(kbDocumentRepository.aggregateCreatedTrend(eq(userId), eq(kbId), any())).thenReturn(List.of(
+                Map.of("dayVal", "2026-04-19", "dayCount", 1L),
+                Map.of("dayVal", "2026-04-20", "dayCount", 2L)
+        ));
+
+        KbDocumentStatsResponse result = service.getDocumentStats(
+                userId, kbId, 30, ZoneId.of("Asia/Shanghai"), 10
+        );
 
         assertNotNull(result);
-        assertEquals(3L, result.getTotalDocuments());
-        assertEquals(2L, result.getSuccessDocuments());
+        assertEquals(6L, result.getTotalDocuments());
+        assertEquals(4L, result.getSuccessDocuments());
         assertEquals(1L, result.getProcessingDocuments());
-        assertEquals(0L, result.getFailedDocuments());
-        assertEquals(1L, result.getPdfDocuments());
-        assertEquals(0L, result.getDocxDocuments());
+        assertEquals(1L, result.getFailedDocuments());
+
+        assertEquals(2L, result.getPdfDocuments());
+        assertEquals(1L, result.getDocxDocuments());
         assertEquals(1L, result.getMdDocuments());
         assertEquals(1L, result.getTxtDocuments());
-        assertEquals(0L, result.getHtmlDocuments());
+        assertEquals(1L, result.getHtmlDocuments());
+
         assertEquals(60L, result.getTotalChunks());
+
+        assertEquals(2, result.getFileTypeDistribution().size());
+        assertEquals("pdf", result.getFileTypeDistribution().get(0).getName());
+        assertEquals(2L, result.getFileTypeDistribution().get(0).getCount());
+
+        assertEquals(2, result.getStatusDistribution().size());
+
+        assertEquals(2, result.getTrend7Days().size());
+        assertEquals(2, result.getTrend30Days().size());
 
         verify(kbDocumentRepository, times(9)).selectCount(any());
         verify(kbDocumentRepository, times(1)).selectList(any());
+        verify(kbDocumentRepository, times(1)).aggregateByFileType(userId, kbId);
+        verify(kbDocumentRepository, times(1)).aggregateByStatus(userId, kbId);
+        verify(kbDocumentRepository, times(2)).aggregateCreatedTrend(eq(userId), eq(kbId), any());
     }
 
     @Test
     @DisplayName("getDocumentStats 当 userId 非法时应抛异常")
     void shouldThrowWhenUserIdInvalid() {
-        BusinessException exception = assertThrows(BusinessException.class,
-                () -> documentStatsService.getDocumentStats(0L, 1L));
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> service.getDocumentStats(0L, 1L, 30, ZoneId.of("Asia/Shanghai"), 10));
 
-        assertTrue(exception.getMessage().contains("userId 不能为空"));
-
+        assertTrue(ex.getMessage().contains("userId 不能为空"));
         verifyNoInteractions(kbDocumentRepository);
     }
 }

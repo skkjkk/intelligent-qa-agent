@@ -9,84 +9,104 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import java.time.ZoneId;
+import java.util.List;
+import java.util.Map;
+
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
 
-/**
- * 知识库统计服务单元测试。
- *
- * <p>用于验证知识库概览统计查询与参数校验等核心逻辑。
- *
- * @author 17644
- * @version 1.0.0
- * @since 2026/4/11
- */
 class KnowledgeBaseStatsServiceImplTest {
 
     private KbDocumentRepository kbDocumentRepository;
     private KbQueryLogRepository kbQueryLogRepository;
     private KbQueryFeedbackRepository kbQueryFeedbackRepository;
-    private KnowledgeBaseStatsServiceImpl knowledgeBaseStatsService;
+    private KnowledgeBaseStatsServiceImpl service;
 
     @BeforeEach
     void setUp() {
         kbDocumentRepository = mock(KbDocumentRepository.class);
         kbQueryLogRepository = mock(KbQueryLogRepository.class);
         kbQueryFeedbackRepository = mock(KbQueryFeedbackRepository.class);
-
-        knowledgeBaseStatsService = new KnowledgeBaseStatsServiceImpl(
-                kbDocumentRepository,
-                kbQueryLogRepository,
-                kbQueryFeedbackRepository
+        service = new KnowledgeBaseStatsServiceImpl(
+                kbDocumentRepository, kbQueryLogRepository, kbQueryFeedbackRepository
         );
     }
 
     @Test
-    @DisplayName("getOverview 应正确汇总统计结果")
-    void shouldReturnCorrectOverviewStats() {
+    @DisplayName("getOverview 应正确汇总概览+趋势+反馈质量")
+    void shouldReturnOverviewWithTrendAndFeedbackQuality() {
         Long userId = 1001L;
         Long kbId = 1L;
 
         when(kbDocumentRepository.selectCount(any())).thenReturn(
-                3L, // totalDocuments
-                2L, // successDocuments
-                1L, // processingDocuments
-                0L  // failedDocuments
+                10L, // totalDocuments
+                8L,  // successDocuments
+                1L,  // processingDocuments
+                1L   // failedDocuments
         );
 
-        when(kbQueryLogRepository.selectCount(any())).thenReturn(
-                10L, // totalQueries
-                9L   // successQueries
+        when(kbQueryLogRepository.aggregateSummary(userId, kbId)).thenReturn(Map.of(
+                "totalQueries", 50L,
+                "successQueries", 45L
+        ));
+
+        when(kbQueryFeedbackRepository.aggregateQuality(userId, kbId)).thenReturn(Map.of(
+                "totalFeedbacks", 20L,
+                "helpfulCount", 15L,
+                "unhelpfulCount", 5L,
+                "avgRating", 4.2
+        ));
+
+        when(kbDocumentRepository.countCreatedSince(eq(userId), eq(kbId), any())).thenReturn(3L, 12L);
+        when(kbQueryLogRepository.countSince(eq(userId), eq(kbId), any())).thenReturn(9L, 35L);
+
+        when(kbQueryLogRepository.aggregateTrend(eq(userId), eq(kbId), any())).thenReturn(List.of(
+                Map.of("dayVal", "2026-04-19", "dayCount", 2L),
+                Map.of("dayVal", "2026-04-20", "dayCount", 3L)
+        ));
+        when(kbDocumentRepository.aggregateCreatedTrend(eq(userId), eq(kbId), any())).thenReturn(List.of(
+                Map.of("dayVal", "2026-04-19", "dayCount", 1L),
+                Map.of("dayVal", "2026-04-20", "dayCount", 2L)
+        ));
+
+        KbStatsOverviewResponse result = service.getOverview(
+                userId, kbId, 30, ZoneId.of("Asia/Shanghai"), 10
         );
-
-        when(kbQueryFeedbackRepository.selectCount(any())).thenReturn(4L);
-
-        KbStatsOverviewResponse result = knowledgeBaseStatsService.getOverview(userId, kbId);
 
         assertNotNull(result);
-        assertEquals(3L, result.getTotalDocuments());
-        assertEquals(2L, result.getSuccessDocuments());
+        assertEquals(10L, result.getTotalDocuments());
+        assertEquals(8L, result.getSuccessDocuments());
         assertEquals(1L, result.getProcessingDocuments());
-        assertEquals(0L, result.getFailedDocuments());
-        assertEquals(10L, result.getTotalQueries());
-        assertEquals(9L, result.getSuccessQueries());
-        assertEquals(4L, result.getTotalFeedbacks());
+        assertEquals(1L, result.getFailedDocuments());
 
-        verify(kbDocumentRepository, times(4)).selectCount(any());
-        verify(kbQueryLogRepository, times(2)).selectCount(any());
-        verify(kbQueryFeedbackRepository, times(1)).selectCount(any());
+        assertEquals(50L, result.getTotalQueries());
+        assertEquals(45L, result.getSuccessQueries());
+
+        assertEquals(20L, result.getTotalFeedbacks());
+        assertEquals(15L, result.getHelpfulCount());
+        assertEquals(5L, result.getUnhelpfulCount());
+        assertEquals(4.2D, result.getAvgRating());
+
+        assertEquals(3L, result.getDocumentsLast7Days());
+        assertEquals(12L, result.getDocumentsLast30Days());
+        assertEquals(9L, result.getQueriesLast7Days());
+        assertEquals(35L, result.getQueriesLast30Days());
+
+        assertEquals(2, result.getQueryTrend30Days().size());
+        assertEquals("2026-04-19", result.getQueryTrend30Days().get(0).getDay());
+        assertEquals(2L, result.getQueryTrend30Days().get(0).getCount());
+        assertEquals(2, result.getDocumentTrend30Days().size());
     }
 
     @Test
     @DisplayName("getOverview 当 userId 非法时应抛异常")
     void shouldThrowWhenUserIdInvalid() {
-        BusinessException exception = assertThrows(BusinessException.class,
-                () -> knowledgeBaseStatsService.getOverview(null, 1L));
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> service.getOverview(null, 1L, 30, ZoneId.of("Asia/Shanghai"), 10));
 
-        assertTrue(exception.getMessage().contains("userId 不能为空"));
-
-        verifyNoInteractions(kbDocumentRepository);
-        verifyNoInteractions(kbQueryLogRepository);
-        verifyNoInteractions(kbQueryFeedbackRepository);
+        assertTrue(ex.getMessage().contains("userId 不能为空"));
+        verifyNoInteractions(kbDocumentRepository, kbQueryLogRepository, kbQueryFeedbackRepository);
     }
 }

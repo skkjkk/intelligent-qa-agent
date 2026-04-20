@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.jujiu.agent.common.exception.BusinessException;
 import com.jujiu.agent.common.result.ResultCode;
 import com.jujiu.agent.model.dto.response.KbStatsOverviewResponse;
+import com.jujiu.agent.model.dto.response.KbTrendPointResponse;
 import com.jujiu.agent.model.entity.KbDocument;
 import com.jujiu.agent.model.entity.KbQueryFeedback;
 import com.jujiu.agent.model.entity.KbQueryLog;
@@ -13,6 +14,13 @@ import com.jujiu.agent.repository.KbQueryLogRepository;
 import com.jujiu.agent.service.kb.KnowledgeBaseStatsService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+
+import java.math.BigDecimal;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
 
 /**
  * 知识库统计服务实现。
@@ -28,7 +36,7 @@ import org.springframework.stereotype.Service;
 public class KnowledgeBaseStatsServiceImpl implements KnowledgeBaseStatsService {
 
     /** 知识库文档仓储。 */
-    private final KbDocumentRepository KbDocumentRepository;
+    private final KbDocumentRepository kbDocumentRepository;
     /** 知识库查询日志仓储。 */
     private final KbQueryLogRepository kbQueryLogRepository;
     /** 知识库查询反馈仓储。 */
@@ -37,27 +45,57 @@ public class KnowledgeBaseStatsServiceImpl implements KnowledgeBaseStatsService 
     /**
      * 构造方法。
      *
-     * @param KbDocumentRepository       知识库文档仓储
+     * @param kbDocumentRepository       知识库文档仓储
      * @param kbQueryLogRepository       知识库查询日志仓储
      * @param kbQueryFeedbackRepository  知识库查询反馈仓储
      */
-    public KnowledgeBaseStatsServiceImpl(KbDocumentRepository KbDocumentRepository,
+    public KnowledgeBaseStatsServiceImpl(KbDocumentRepository kbDocumentRepository,
                                          KbQueryLogRepository kbQueryLogRepository,
                                          KbQueryFeedbackRepository kbQueryFeedbackRepository) {
-        this.KbDocumentRepository = KbDocumentRepository;
+        this.kbDocumentRepository = kbDocumentRepository;
         this.kbQueryLogRepository = kbQueryLogRepository;
         this.kbQueryFeedbackRepository = kbQueryFeedbackRepository;
     }
 
     /**
-     * 查询知识库概览统计。
+     * 查询知识库概览统计
+     * 
+     * <p>查询知识库的综合性概览数据，整合文档、问答、反馈等多维度统计信息。
+     * 提供一个接口获取所有核心指标，用于Dashboard展示或数据概览页面。
+     * 
+     * <p>统计维度：
+     * <ul>
+     *     <li>文档统计：总数、成功数、处理中数、失败数</li>
+     *     <li>问答统计：总数、成功数</li>
+     *     <li>反馈统计：总数、有帮助数、无帮助数、平均评分</li>
+     *     <li>时间趋势：7天/30天文档创建量、7天/30天问答量</li>
+     *     <li>趋势图表：30天问答趋势、30天文档创建趋势</li>
+     * </ul>
+     * 
+     * <p>执行流程：
+     * <ol>
+     *     <li>参数校验：验证userId有效性</li>
+     *     <li>统计文档数量：按状态分别统计</li>
+     *     <li>统计查询数量：从聚合摘要中提取</li>
+     *     <li>统计反馈数量：从质量聚合中提取</li>
+     *     <li>统计时间趋势：7天和30天增量</li>
+     *     <li>查询趋势图表数据</li>
+     *     <li>构建并返回概览响应</li>
+     * </ol>
+     * 
+     * <p>对比其他统计方法：
+     * <ul>
+     *     <li>getOverview: 综合概览，一次获取所有核心指标</li>
+     *     <li>getDocumentStats: 文档详细统计，多维度分布</li>
+     *     <li>getQueryStats: 问答详细统计，质量反馈</li>
+     * </ul>
      *
-     * @param userId 当前用户 ID
-     * @param kbId 知识库 ID，可为空
-     * @return 概览统计信息
+     * @param userId 当前用户 ID，必填
+     * @param kbId 知识库 ID，可选，为空时统计用户所有知识库
+     * @return 概览统计信息，包含文档、问答、反馈等核心指标
      */
     @Override
-    public KbStatsOverviewResponse getOverview(Long userId, Long kbId) {
+    public KbStatsOverviewResponse getOverview(Long userId, Long kbId, Integer windowDays, ZoneId zoneId, Integer topN) {
         // 1. 参数校验
         if (userId == null || userId <= 0) {
             throw new BusinessException(ResultCode.INVALID_PARAMETER, "userId 不能为空");
@@ -68,16 +106,34 @@ public class KnowledgeBaseStatsServiceImpl implements KnowledgeBaseStatsService 
         Long successDocuments = countDocuments(userId, kbId, "SUCCESS");
         Long processingDocuments = countDocuments(userId, kbId, "PROCESSING");
         Long failedDocuments = countDocuments(userId, kbId, "FAILED");
+
+        // 3. 统计查询数量（总/成功）
+        Map<String, Object> querySummary = kbQueryLogRepository.aggregateSummary(userId, kbId);
+        Long totalQueries = longVal(querySummary.get("totalQueries"));
+        Long successQueries = longVal(querySummary.get("successQueries"));
         
-        // 3. 统计查询数量与反馈数量
-        Long totalQueries = countQueries(userId, kbId, null);
-        Long successQueries = countQueries(userId, kbId, "SUCCESS");
-        Long totalFeedbacks = countFeedbacks(userId, kbId);
+        // 4. 统计反馈数量（总/成功/helpful/unhelpful）
+        Map<String, Object> feedbackQuality = kbQueryFeedbackRepository.aggregateQuality(userId, kbId);
+        Long totalFeedbacks = longVal(feedbackQuality.get("totalFeedbacks"));
+        Long helpfulCount = longVal(feedbackQuality.get("helpfulCount"));
+        Long unhelpfulCount = longVal(feedbackQuality.get("unhelpfulCount"));
+        Double avgRating = doubleVal(feedbackQuality.get("avgRating"));
+
+        // 5. 统计文档创建趋势（最近7天/30天）
+        LocalDateTime now = LocalDateTime.now();
+        Long documentsLast7Days = kbDocumentRepository.countCreatedSince(userId, kbId, now.minusDays(7));
+        Long documentsLast30Days = kbDocumentRepository.countCreatedSince(userId, kbId, now.minusDays(30));
+        Long queriesLast7Days = kbQueryLogRepository.countSince(userId, kbId, now.minusDays(7));
+        Long queriesLast30Days = kbQueryLogRepository.countSince(userId, kbId, now.minusDays(30));
+
+        // 6. 统计查询趋势（最近7天/30天）
+        List<KbTrendPointResponse> queryTrend30Days = toTrend(kbQueryLogRepository.aggregateTrend(userId, kbId, now.minusDays(30)));
+        List<KbTrendPointResponse> documentTrend30Days = toTrend(kbDocumentRepository.aggregateCreatedTrend(userId, kbId, now.minusDays(30)));
         
-        log.info("[KB][STATS] 概览统计查询完成 - userId={}, kbId={}, totalDocuments={}, totalQueries={}, totalFeedbacks={}",
+      log.info("[KB][STATS] 概览统计查询完成 - userId={}, kbId={}, totalDocuments={}, totalQueries={}, totalFeedbacks={}",
                 userId, kbId, totalDocuments, totalQueries, totalFeedbacks);
 
-        // 4. 构建并返回概览响应
+        // 7. 构建并返回概览响应
         return KbStatsOverviewResponse.builder()
                 .totalDocuments(totalDocuments)
                 .successDocuments(successDocuments)
@@ -86,81 +142,58 @@ public class KnowledgeBaseStatsServiceImpl implements KnowledgeBaseStatsService 
                 .totalQueries(totalQueries)
                 .successQueries(successQueries)
                 .totalFeedbacks(totalFeedbacks)
+                .documentsLast7Days(documentsLast7Days)
+                .documentsLast30Days(documentsLast30Days)
+                .queriesLast7Days(queriesLast7Days)
+                .queriesLast30Days(queriesLast30Days)
+                .helpfulCount(helpfulCount)
+                .unhelpfulCount(unhelpfulCount)
+                .avgRating(avgRating)
+                .queryTrend30Days(queryTrend30Days)
+                .documentTrend30Days(documentTrend30Days)
                 .build();
     }
 
-    /**
-     * 统计反馈数量。
-     *
-     * @param userId 当前用户 ID
-     * @param kbId 知识库 ID
-     * @return 反馈数量
-     */
-    private Long countFeedbacks(Long userId, Long kbId) {
-        // 1. 若未指定知识库 ID，直接按用户 ID 统计反馈数量
-        if (kbId == null) {
-            return kbQueryFeedbackRepository.selectCount(
-                    new LambdaQueryWrapper<KbQueryFeedback>()
-                            .eq(KbQueryFeedback::getUserId, userId)
-            );
-        }
-
-        // 2. 若指定了知识库 ID，通过子查询关联 kb_query_log 表进行统计
-        return kbQueryFeedbackRepository.selectCount(
-                new LambdaQueryWrapper<KbQueryFeedback>()
-                        .inSql(KbQueryFeedback::getQueryLogId,
-                                "SELECT id FROM kb_query_log WHERE user_id = " + userId + " AND kb_id = " + kbId)
-        );
-    }
-
-    /**
-     * 统计查询数量。
-     *
-     * @param userId 当前用户 ID
-     * @param kbId 知识库 ID
-     * @param status 查询状态，可为空
-     * @return 查询数量
-     */
-    private Long countQueries(Long userId, Long kbId, String status) {
-        // 1. 构建基础查询条件
-        LambdaQueryWrapper<KbQueryLog> wrapper = new LambdaQueryWrapper<KbQueryLog>()
-                .eq(KbQueryLog::getUserId, userId);
-
-        // 2. 按需追加知识库 ID 和状态筛选条件
-        if (kbId != null) {
-            wrapper.eq(KbQueryLog::getKbId, kbId);
-        }
-        if (status != null && !status.isBlank()) {
-            wrapper.eq(KbQueryLog::getStatus, status);
-        }
-
-        // 3. 执行计数查询
-        return kbQueryLogRepository.selectCount(wrapper);
-    }
-
-    /**
-     * 统计文档数量。
-     *
-     * @param userId 当前用户 ID
-     * @param kbId 知识库 ID
-     * @param status 文档状态，可为空
-     * @return 文档数量
-     */
     private Long countDocuments(Long userId, Long kbId, String status) {
-        // 1. 构建基础查询条件：属于当前用户且未删除
         LambdaQueryWrapper<KbDocument> wrapper = new LambdaQueryWrapper<KbDocument>()
                 .eq(KbDocument::getOwnerUserId, userId)
                 .eq(KbDocument::getDeleted, 0);
-
-        // 2. 按需追加知识库 ID 和状态筛选条件
         if (kbId != null) {
             wrapper.eq(KbDocument::getKbId, kbId);
         }
         if (status != null && !status.isBlank()) {
             wrapper.eq(KbDocument::getStatus, status);
         }
+        return kbDocumentRepository.selectCount(wrapper);
+    }
 
-        // 3. 执行计数查询
-        return KbDocumentRepository.selectCount(wrapper);
+    private List<KbTrendPointResponse> toTrend(List<Map<String, Object>> rows) {
+        return rows.stream().map(row -> KbTrendPointResponse.builder()
+                .day(String.valueOf(row.get("dayVal")))
+                .count(longVal(row.get("dayCount")))
+                .build()).collect(Collectors.toList());
+    }
+
+    private Long longVal(Object v) {
+        if (v == null) {
+            return 0L;
+        }
+        if (v instanceof Number n) {
+            return n.longValue();
+        }
+        return Long.parseLong(String.valueOf(v));
+    }
+
+    private Double doubleVal(Object v) {
+        if (v == null) {
+            return 0D;
+        }
+        if (v instanceof BigDecimal b) {
+            return b.doubleValue();
+        }
+        if (v instanceof Number n) {
+            return n.doubleValue();
+        }
+        return Double.parseDouble(String.valueOf(v));
     }
 }

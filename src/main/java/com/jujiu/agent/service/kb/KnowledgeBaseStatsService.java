@@ -2,6 +2,8 @@ package com.jujiu.agent.service.kb;
 
 import com.jujiu.agent.model.dto.response.KbStatsOverviewResponse;
 
+import java.time.ZoneId;
+
 /**
  * 知识库统计服务接口。
  *
@@ -19,5 +21,5 @@ public interface KnowledgeBaseStatsService {
      * @param kbId 知识库 ID，可为空
      * @return 概览统计信息
      */
-    KbStatsOverviewResponse getOverview(Long userId, Long kbId);
+    KbStatsOverviewResponse getOverview(Long userId, Long kbId, Integer windowDays, ZoneId zoneId, Integer topN);
 }
