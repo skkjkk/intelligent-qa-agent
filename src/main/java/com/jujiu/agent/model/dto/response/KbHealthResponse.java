@@ -63,4 +63,11 @@ public class KbHealthResponse {
      */
     @Schema(description = "说明信息")
     private String message;
+
+    /**
+     * 组件明细列表。
+     */
+    @Schema(description = "组件明细列表")
+    private java.util.List<KbHealthComponentDetail> details;
+
 }

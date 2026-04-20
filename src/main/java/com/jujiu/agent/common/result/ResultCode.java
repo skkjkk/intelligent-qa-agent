@@ -189,8 +189,47 @@ public enum ResultCode {
      * 服务尚未实现
      */
     SYSTEM_ERROR(4012, "服务尚未实现"),
-    
-    
+
+    /**
+     * Embedding 配置缺失
+     */
+    EMBEDDING_CONFIG_MISSING(4013, "Embedding 配置缺失"),
+    /**
+     * Embedding 配置非法
+     */
+    EMBEDDING_CONFIG_INVALID(4014, "Embedding 配置非法"),
+    /**
+     * Embedding 远端调用超时
+     */
+    EMBEDDING_REMOTE_TIMEOUT(4015, "Embedding 远端调用超时"),
+    /**
+     * Embedding 远端服务异常
+     */
+    EMBEDDING_REMOTE_ERROR(4016, "Embedding 远端服务异常"),
+    /**
+     * Embedding 服务限流
+     */
+    EMBEDDING_REMOTE_RATE_LIMITED(4017, "Embedding 服务限流"),
+    /**
+     * Embedding 响应为空
+     */
+    EMBEDDING_RESPONSE_EMPTY(4018, "Embedding 响应为空"),
+    /**
+     * Embedding 响应格式异常
+     */
+    EMBEDDING_RESPONSE_FORMAT_ERROR(4019, "Embedding 响应格式异常"),
+    /**
+     * Embedding 缓存读取失败
+     */
+    EMBEDDING_CACHE_READ_ERROR(4020, "Embedding 缓存读取失败"),
+    /**
+     * Embedding 缓存写入失败
+     */
+    EMBEDDING_CACHE_WRITE_ERROR(4021, "Embedding 缓存写入失败"),
+    /**
+     * Embedding 向量维度异常
+     */
+    EMBEDDING_DIMENSION_MISMATCH(4022, "Embedding 向量维度异常"),
     
     /**
      * 服务器内部错误

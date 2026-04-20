@@ -4,6 +4,7 @@ import cn.hutool.crypto.digest.DigestUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.jujiu.agent.common.exception.BusinessException;
 import com.jujiu.agent.common.result.ResultCode;
+import com.jujiu.agent.config.KnowledgeBaseProperties;
 import com.jujiu.agent.model.dto.request.UploadDocumentRequest;
 import com.jujiu.agent.model.dto.response.DocumentProcessStatusResponse;
 import com.jujiu.agent.model.dto.response.KbBatchOperationResponse;
@@ -87,6 +88,8 @@ public class DocumentServiceImpl implements DocumentService {
     private final DocumentAclAuditService documentAclAuditService;
     /** 知识库文档组仓储。 */
     private final KbDocumentGroupRepository kbDocumentGroupRepository;
+    /** 知识库配置。 */
+    private final KnowledgeBaseProperties knowledgeBaseProperties;
 
     /**
      * 构造方法。
@@ -100,6 +103,8 @@ public class DocumentServiceImpl implements DocumentService {
      * @param embeddingService                向量嵌入服务
      * @param documentAclService              文档 ACL 服务
      * @param documentAclAuditService         文档 ACL 审计服务
+     * @param kbDocumentGroupRepository       知识库文档组仓储
+     * @param knowledgeBaseProperties         知识库配置
      */
     public DocumentServiceImpl(MinioFileService minioFileService,
                                KbDocumentRepository kbDocumentRepository,
@@ -110,7 +115,8 @@ public class DocumentServiceImpl implements DocumentService {
                                EmbeddingService embeddingService,
                                DocumentAclService documentAclService,
                                DocumentAclAuditService documentAclAuditService,
-                               KbDocumentGroupRepository kbDocumentGroupRepository) {
+                               KbDocumentGroupRepository kbDocumentGroupRepository,
+                               KnowledgeBaseProperties knowledgeBaseProperties) {
         this.minioFileService = minioFileService;
         this.kbDocumentRepository = kbDocumentRepository;
         this.kbChunkRepository = kbChunkRepository;
@@ -121,6 +127,7 @@ public class DocumentServiceImpl implements DocumentService {
         this.documentAclService = documentAclService;
         this.documentAclAuditService = documentAclAuditService;
         this.kbDocumentGroupRepository = kbDocumentGroupRepository;
+        this.knowledgeBaseProperties = knowledgeBaseProperties;
     }
 
 
@@ -605,11 +612,25 @@ public class DocumentServiceImpl implements DocumentService {
             elasticsearchIndexService.ensureIndexExists();
 
             int successCount = 0;
+            int embeddingFailCount = 0;
             for (KbChunk chunk : chunks) {
                 log.info("[KB][INDEX] 开始处理分块索引 - userId={}, documentId={}, chunkId={}, chunkIndex={}",
                         userId, documentId, chunk.getId(), chunk.getChunkIndex());
 
-                float[] vector = embeddingService.embedDocument(chunk.getContent());
+                float[] vector;
+                try {
+                    vector = embeddingService.embedDocument(chunk.getContent());
+                } catch (BusinessException ex) {
+                    if (shouldContinueOnEmbeddingError(ex)) {
+                        embeddingFailCount++;
+                        log.warn("[KB][INDEX] 分块向量化失败并跳过 - userId={}, documentId={}, chunkId={}, chunkIndex={}, code={}, message={}",
+                                userId, documentId, chunk.getId(), chunk.getChunkIndex(),
+                                ex.getResultCode() == null ? "UNKNOWN" : ex.getResultCode().name(),
+                                ex.getMessage());
+                        continue;
+                    }
+                    throw ex;
+                }
 
                 log.info("[KB][EMBEDDING] 分块向量生成成功 - userId={}, documentId={}, chunkId={}, chunkIndex={}, dimension={}",
                         userId, documentId, chunk.getId(), chunk.getChunkIndex(), vector.length);
@@ -626,10 +647,15 @@ public class DocumentServiceImpl implements DocumentService {
             document.setUpdatedAt(LocalDateTime.now());
             kbDocumentRepository.updateById(document);
 
-            insertProcessLog(documentId, KbProcessStage.EMBEDDING, KbProcessStatus.SUCCESS,
-                    "文档向量化完成，chunkCount=" + chunks.size());
-            insertProcessLog(documentId, KbProcessStage.INDEX, KbProcessStatus.SUCCESS,
-                    "文档索引完成，chunkCount=" + chunks.size());
+            insertProcessLog(
+                    documentId, 
+                    KbProcessStage.EMBEDDING, 
+                    KbProcessStatus.SUCCESS,
+                    "文档向量化完成，chunkCount=" + chunks.size() + ", successCount=" + successCount + ", failCount=" + embeddingFailCount);
+            insertProcessLog(documentId, 
+                    KbProcessStage.INDEX,
+                    KbProcessStatus.SUCCESS,
+                    "文档索引完成，chunkCount=" + chunks.size() + ", successCount=" + successCount + ", failCount=" + embeddingFailCount);
             
             log.info("[KB][INDEX] 文档索引完成 - userId={}, documentId={}, chunkCount={}", 
                     userId, documentId, chunks.size());
@@ -653,6 +679,68 @@ public class DocumentServiceImpl implements DocumentService {
         }
     }
 
+    /**
+     * 判断嵌入错误时是否应该继续处理
+     * 
+     * <p>在文档索引过程中，如果遇到嵌入错误，根据配置决定是否继续处理。
+     * 该方法实现了降级策略：如果配置允许降级，且错误是可重试的嵌入错误，
+     * 则可以选择继续处理而不是直接失败。
+     * 
+     * <p>判断逻辑：
+     * <ol>
+     *     <li>检查是否配置了降级策略（allowDocumentIndexContinue）</li>
+     *     <li>如果未配置或配置为false，直接返回false</li>
+     *     <li>如果配置为true，检查错误码是否是可重试的嵌入错误</li>
+     * </ol>
+     * 
+     * <p>可重试的嵌入错误包括：
+     * <ul>
+     *     <li>EMBEDDING_REMOTE_TIMEOUT - 远程嵌入服务超时</li>
+     *     <li>EMBEDDING_REMOTE_ERROR - 远程嵌入服务错误</li>
+     *     <li>EMBEDDING_REMOTE_RATE_LIMITED - 远程嵌入服务限流</li>
+     * </ul>
+     * 
+     * @param ex 嵌入过程中产生的业务异常
+     * @return 如果应该继续处理返回true，否则返回false
+     */
+    private boolean shouldContinueOnEmbeddingError(BusinessException ex) {
+        // 1. 获取降级配置
+        Boolean allowContinue = knowledgeBaseProperties.getEmbedding() != null
+                && knowledgeBaseProperties.getEmbedding().getDegrade() != null
+                ? knowledgeBaseProperties.getEmbedding().getDegrade().getAllowDocumentIndexContinue()
+                : Boolean.FALSE;
+
+        // 2. 如果未开启降级配置，直接返回false
+        if (!Boolean.TRUE.equals(allowContinue)) {
+            return false;
+        }
+        
+        // 3. 检查错误码是否是可重试的嵌入错误
+        return isRetryableEmbeddingError(ex.getResultCode());
+    }
+
+    /**
+     * 判断嵌入错误是否可重试
+     * 
+     * <p>检查给定的错误码是否属于临时性的、可重试的嵌入服务错误。
+     * 只有临时性错误才允许在降级策略下继续处理。
+     * 
+     * <p>可重试的错误特征：
+     * <ul>
+     *     <li>通常是临时性的服务端问题</li>
+     *     <li>再次尝试有可能成功</li>
+     *     <li>不是配置错误或业务逻辑错误</li>
+     * </ul>
+     * 
+     * @param code 业务错误码
+     * @return 如果是可重试的错误返回true，否则返回false
+     */
+    private boolean isRetryableEmbeddingError(ResultCode code) {
+        return code == ResultCode.EMBEDDING_REMOTE_TIMEOUT
+                || code == ResultCode.EMBEDDING_REMOTE_ERROR
+                || code == ResultCode.EMBEDDING_REMOTE_RATE_LIMITED;
+    }
+    
     /**
      * 校验文档是否满足重建索引条件。
      *

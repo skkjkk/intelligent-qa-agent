@@ -63,6 +63,46 @@ public class KnowledgeBaseProperties {
          * 向量维度
          */
         private Integer dimension = 2048;
+        
+        /**
+         * 是否启用
+         */
+        private Boolean enabled = true;
+
+        /**
+         * 提供商
+         */
+        private String provider = "zhipu";
+
+        /**
+         * 超时时间（毫秒）
+         */
+        private Long timeoutMs = 8000L;
+
+        private Retry retry = new Retry();
+        private Cache cache = new Cache();
+        private Degrade degrade = new Degrade();
+        
+        @Data
+        public static class Retry {
+            private Boolean enabled = true;
+            private Integer maxAttempts = 3;
+            private Long backoffMs = 300L;
+            private Long maxBackoffMs = 1500L;
+        }
+
+        @Data
+        public static class Cache {
+            private Boolean enabled = true;
+            private Long ttlHours = 24L;
+            private String keyPrefix = "kb:embedding";
+        }
+
+        @Data
+        public static class Degrade {
+            private Boolean allowCacheReadOnRemoteFailure = true;
+            private Boolean allowDocumentIndexContinue = true;
+        }
     }
 
     @Data
@@ -104,6 +144,14 @@ public class KnowledgeBaseProperties {
          * Minio存储桶名称
          */
         private String bucketName;
+
+        private Health health = new Health();
+
+        @Data
+        public static class Health {
+            private Boolean writeCheckEnabled = true;
+            private String probeObjectPrefix = "_health";
+        }
     }
     
     @Data
@@ -122,6 +170,16 @@ public class KnowledgeBaseProperties {
          * 文档索引主题。
          */
         private String topicDocumentIndex = "kb-document-index";
+
+        private Health health = new Health();
+
+        @Data
+        public static class Health {
+            private String topic = "kb-health-check";
+            private Long adminTimeoutMs = 3000L;
+            private Long sendTimeoutMs = 3000L;
+            private Boolean sendCheckEnabled = true;
+        }
     }
     
     @Data

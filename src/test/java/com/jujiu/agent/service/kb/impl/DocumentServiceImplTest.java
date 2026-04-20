@@ -1,6 +1,7 @@
 package com.jujiu.agent.service.kb.impl;
 
 import com.jujiu.agent.common.exception.BusinessException;
+import com.jujiu.agent.config.KnowledgeBaseProperties;
 import com.jujiu.agent.model.dto.response.DocumentProcessStatusResponse;
 import com.jujiu.agent.model.dto.response.KbBatchOperationResponse;
 import com.jujiu.agent.model.dto.response.KbDocumentResponse;
@@ -42,7 +43,7 @@ class DocumentServiceImplTest {
     private DocumentAclService documentAclService;
     private DocumentAclAuditService documentAclAuditService;
     private KbDocumentGroupRepository kbDocumentGroupRepository;
-
+    private KnowledgeBaseProperties knowledgeBaseProperties;
     private DocumentServiceImpl documentService;
 
     @BeforeEach
@@ -57,7 +58,8 @@ class DocumentServiceImplTest {
         documentAclService = mock(DocumentAclService.class);
         documentAclAuditService = mock(DocumentAclAuditService.class);
         kbDocumentGroupRepository = mock(KbDocumentGroupRepository.class);
-
+        knowledgeBaseProperties = mock(KnowledgeBaseProperties.class);
+        
         documentService = new DocumentServiceImpl(
                 minioFileService,
                 kbDocumentRepository,
@@ -68,7 +70,8 @@ class DocumentServiceImplTest {
                 embeddingService,
                 documentAclService,
                 documentAclAuditService,
-                kbDocumentGroupRepository
+                kbDocumentGroupRepository,
+                knowledgeBaseProperties
         );
     }
 

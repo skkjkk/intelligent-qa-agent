@@ -1,115 +1,111 @@
 package com.jujiu.agent.service.kb.impl;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.jujiu.agent.common.exception.BusinessException;
+import com.jujiu.agent.common.result.ResultCode;
 import com.jujiu.agent.config.KnowledgeBaseProperties;
+import com.jujiu.agent.service.kb.embedding.EmbeddingProviderClient;
+import com.jujiu.agent.service.kb.embedding.EmbeddingScene;
+import com.jujiu.agent.service.kb.embedding.RedisEmbeddingCache;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
-import org.springframework.data.redis.core.StringRedisTemplate;
-import org.springframework.data.redis.core.ValueOperations;
-import org.springframework.web.reactive.function.client.WebClient;
+
+import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
-/**
- * 向量化服务单元测试。
- *
- * <p>用于验证输入校验、缓存命中、缓存异常降级以及配置校验等核心逻辑。
- *
- * @author 17644
- * @version 1.0.0
- * @since 2026/4/11
- */
 class EmbeddingServiceImplTest {
 
     private KnowledgeBaseProperties properties;
-    private StringRedisTemplate redisTemplate;
-    private ValueOperations<String, String> valueOperations;
-    private WebClient.Builder webClientBuilder;
+    private EmbeddingProviderClient providerClient;
+    private RedisEmbeddingCache embeddingCache;
     private EmbeddingServiceImpl embeddingService;
 
     @BeforeEach
     void setUp() {
         properties = mock(KnowledgeBaseProperties.class);
-        redisTemplate = mock(StringRedisTemplate.class);
-        valueOperations = mock(ValueOperations.class);
-        webClientBuilder = mock(WebClient.Builder.class);
-
-        when(redisTemplate.opsForValue()).thenReturn(valueOperations);
-        when(webClientBuilder.build()).thenReturn(mock(WebClient.class));
+        providerClient = mock(EmbeddingProviderClient.class);
+        embeddingCache = mock(RedisEmbeddingCache.class);
 
         KnowledgeBaseProperties.Embedding embedding = new KnowledgeBaseProperties.Embedding();
-        embedding.setApiUrl("https://open.bigmodel.cn/api/paas/v4/embeddings");
-        embedding.setApiKey("test-api-key");
         embedding.setModel("embedding-3");
-        embedding.setDimension(2048);
+        embedding.setDimension(3);
 
         when(properties.getEmbedding()).thenReturn(embedding);
 
-        embeddingService = new EmbeddingServiceImpl(
-                properties,
-                redisTemplate,
-                new ObjectMapper(),
-                webClientBuilder
-        );
+        embeddingService = new EmbeddingServiceImpl(properties, providerClient, embeddingCache);
     }
 
     @Test
-    @DisplayName("embedQuery 文本为空时应抛异常")
-    void shouldThrowWhenQueryTextIsBlank() {
-        BusinessException exception = assertThrows(BusinessException.class,
-                () -> embeddingService.embedQuery(""));
-
-        assertTrue(exception.getMessage().contains("待向量化文本不能为空"));
-    }
-
-    @Test
-    @DisplayName("embedDocument 缓存命中时应直接返回缓存向量")
-    void shouldReturnCachedVectorWhenCacheHit() {
-        String cachedJson = "[0.1,0.2,0.3]";
-
-        when(valueOperations.get(anyString())).thenReturn(cachedJson);
+    @DisplayName("缓存命中时不调用 provider")
+    void shouldReturnCacheWhenHit() {
+        float[] cached = new float[]{0.11f, 0.22f, 0.33f};
+        when(embeddingCache.get(eq("embedding-3"), eq(EmbeddingScene.DOCUMENT), eq("缓存命中文本")))
+                .thenReturn(Optional.of(cached));
 
         float[] result = embeddingService.embedDocument("缓存命中文本");
 
-        assertNotNull(result);
-        assertEquals(3, result.length);
-        assertEquals(0.1f, result[0], 0.0001f);
-        assertEquals(0.2f, result[1], 0.0001f);
-        assertEquals(0.3f, result[2], 0.0001f);
-
-        verify(valueOperations, times(1)).get(anyString());
+        assertArrayEquals(cached, result);
+        verify(providerClient, never()).embed(anyString(), any(), anyString());
+        verify(embeddingCache, never()).put(anyString(), any(), anyString(), any());
     }
 
     @Test
-    @DisplayName("embedDocument 配置缺失时应抛异常")
-    void shouldThrowWhenEmbeddingConfigMissing() {
-        when(properties.getEmbedding()).thenReturn(null);
+    @DisplayName("缓存未命中时调用 provider 并回写缓存")
+    void shouldCallProviderAndPutCacheWhenMiss() {
+        when(embeddingCache.get(eq("embedding-3"), eq(EmbeddingScene.QUERY), eq("查询文本")))
+                .thenReturn(Optional.empty());
+        float[] remote = new float[]{0.1f, 0.2f, 0.3f};
+        when(providerClient.embed(eq("查询文本"), eq(EmbeddingScene.QUERY), eq("embedding-3")))
+                .thenReturn(remote);
 
-        EmbeddingServiceImpl service = new EmbeddingServiceImpl(
-                properties,
-                redisTemplate,
-                new ObjectMapper(),
-                webClientBuilder
-        );
+        float[] result = embeddingService.embedQuery("查询文本");
 
-        BusinessException exception = assertThrows(BusinessException.class,
-                () -> service.embedDocument("测试文本"));
-
-        assertTrue(exception.getMessage().contains("knowledge-base.embedding 配置缺失"));
+        assertArrayEquals(remote, result);
+        verify(providerClient, times(1)).embed("查询文本", EmbeddingScene.QUERY, "embedding-3");
+        verify(embeddingCache, times(1)).put("embedding-3", EmbeddingScene.QUERY, "查询文本", remote);
     }
 
     @Test
-    @DisplayName("embedDocument 缓存损坏时应尝试降级")
-    void shouldFallbackWhenCacheDataBroken() {
-        when(valueOperations.get(anyString())).thenReturn("not-json");
+    @DisplayName("provider 返回空向量时抛 EMBEDDING_RESPONSE_EMPTY")
+    void shouldThrowWhenProviderReturnsEmptyVector() {
+        when(embeddingCache.get(eq("embedding-3"), eq(EmbeddingScene.DOCUMENT), eq("空向量文本")))
+                .thenReturn(Optional.empty());
+        when(providerClient.embed(eq("空向量文本"), eq(EmbeddingScene.DOCUMENT), eq("embedding-3")))
+                .thenReturn(new float[0]);
 
-        BusinessException exception = assertThrows(BusinessException.class,
-                () -> embeddingService.embedDocument("缓存损坏文本"));
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> embeddingService.embedDocument("空向量文本"));
 
-        assertNotNull(exception);
-        verify(valueOperations, times(1)).get(anyString());
+        assertEquals(ResultCode.EMBEDDING_RESPONSE_EMPTY, ex.getResultCode());
+        verify(embeddingCache, never()).put(anyString(), any(), anyString(), any());
+    }
+
+    @Test
+    @DisplayName("provider 返回维度不匹配时抛 EMBEDDING_DIMENSION_MISMATCH")
+    void shouldThrowWhenProviderReturnsDimensionMismatch() {
+        when(embeddingCache.get(eq("embedding-3"), eq(EmbeddingScene.DOCUMENT), eq("维度不匹配文本")))
+                .thenReturn(Optional.empty());
+        when(providerClient.embed(eq("维度不匹配文本"), eq(EmbeddingScene.DOCUMENT), eq("embedding-3")))
+                .thenReturn(new float[]{1.0f, 2.0f});
+
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> embeddingService.embedDocument("维度不匹配文本"));
+
+        assertEquals(ResultCode.EMBEDDING_DIMENSION_MISMATCH, ex.getResultCode());
+        verify(embeddingCache, never()).put(anyString(), any(), anyString(), any());
+    }
+
+    @Test
+    @DisplayName("输入为空白时抛 INVALID_PARAMETER")
+    void shouldThrowWhenTextBlank() {
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> embeddingService.embedQuery("  "));
+
+        assertEquals(ResultCode.INVALID_PARAMETER, ex.getResultCode());
+        verifyNoInteractions(providerClient);
+        verifyNoInteractions(embeddingCache);
     }
 }

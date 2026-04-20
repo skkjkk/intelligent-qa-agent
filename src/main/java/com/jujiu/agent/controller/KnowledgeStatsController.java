@@ -90,5 +90,4 @@ public class KnowledgeStatsController {
         Long userId = getCurrentUserId();
         return Result.success(knowledgeBaseQueryStatsService.getQueryStats(userId, kbId));
     }
-
 }

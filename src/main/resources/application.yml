@@ -32,7 +32,22 @@ knowledge-base:
     api-key: ${KB_EMBEDDING_API_KEY:}
     model: embedding-3
     dimension: 2048
-    
+    enabled: true
+    provider: zhipu
+    timeout-ms: 8000
+    retry:
+      enabled: true
+      max-attempts: 3
+      backoff-ms: 300
+      max-backoff-ms: 1500
+    cache:
+      enabled: true
+      ttl-hours: 24
+      key-prefix: kb:embedding
+    degrade:
+      allow-cache-read-on-remote-failure: true
+      allow-document-index-continue: true
+      
   # Elasticsearch
   elasticsearch:
     index-name: kb_chunks_v3
@@ -45,17 +60,28 @@ knowledge-base:
     access-key: ${KB_MINIO_ACCESS_KEY:}
     secret-key: ${KB_MINIO_SECRET_KEY:}
     bucket-name: intelligent-qa-kb
-    
+    health:
+      write-check-enabled: true
+      probe-object-prefix: _health
+  
   # Kafka
   kafka:
     topic-document-process: kb-document-process
     topic-document-index: kb-document-index
     consumer-concurrency: 1
+    health:
+      topic: kb-health-check
+      admin-timeout-ms: 3000
+      send-timeout-ms: 3000
+      send-check-enabled: true
+      
+  # 分块配置
   chunking:
     default-size: 700
     default-overlap: 80
     max-size: 1200
-  
+    
+  # 重排序配置
   rerank:
     enabled: true
     api-url: ${KB_RERANK_API_URL:https://dashscope.aliyuncs.com/api/v1/services/rerank/text-rerank/text-rerank}
