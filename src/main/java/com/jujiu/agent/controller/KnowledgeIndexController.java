@@ -2,15 +2,13 @@ package com.jujiu.agent.controller;
 
 import com.jujiu.agent.common.result.Result;
 import com.jujiu.agent.model.dto.response.KbBatchOperationResponse;
+import com.jujiu.agent.model.dto.response.KbIndexDiagnosisResponse;
 import com.jujiu.agent.service.kb.DocumentService;
 import com.jujiu.agent.util.SecurityUtils;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.web.bind.annotation.PathVariable;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.*;
 
 /**
  * @author 17644
@@ -86,4 +84,18 @@ public class KnowledgeIndexController {
         return Result.success(response, response.getMessage());
     }
 
+    @GetMapping("/diagnose/{documentId}")
+    @Operation(summary = "索引诊断", description = "诊断文档状态、分块与ES索引一致性")
+    public Result<KbIndexDiagnosisResponse> diagnose(@PathVariable Long documentId) {
+        Long userId = getCurrentUserId();
+        return Result.success(documentService.diagnoseIndex(userId, documentId));
+    }
+
+    @PostMapping("/repair/inconsistent")
+    @Operation(summary = "修复状态不一致数据", description = "批量修复解析/索引状态与实际数据不一致")
+    public Result<KbBatchOperationResponse> repairInconsistent() {
+        Long userId = getCurrentUserId();
+        KbBatchOperationResponse response = documentService.repairInconsistentIndexState(userId);
+        return Result.success(response, response.getMessage());
+    }
 }

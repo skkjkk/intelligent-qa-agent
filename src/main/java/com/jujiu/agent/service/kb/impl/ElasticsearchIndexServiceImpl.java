@@ -1,6 +1,7 @@
 package com.jujiu.agent.service.kb.impl;
 
 import co.elastic.clients.elasticsearch.ElasticsearchClient;
+import co.elastic.clients.elasticsearch._types.FieldValue;
 import co.elastic.clients.elasticsearch._types.mapping.Property;
 import com.jujiu.agent.common.exception.BusinessException;
 import com.jujiu.agent.common.result.ResultCode;
@@ -207,6 +208,61 @@ public class ElasticsearchIndexServiceImpl implements ElasticsearchIndexService 
         } catch (IOException e) {
             log.error("[KB][ES] 按文档删除索引失败，indexName={}, documentId={}", indexName, documentId, e);
             throw new BusinessException(ResultCode.SYSTEM_ERROR, "按文档删除 Elasticsearch 索引失败");
+        }
+    }
+
+    @Override
+    public Long countByDocumentId(Long documentId) {
+        if (documentId == null) {
+            throw new BusinessException(ResultCode.INVALID_PARAMETER, "documentId 不能为空");
+        }
+        String indexName = getIndexName();
+        try {
+            return elasticsearchClient.count(request -> request
+                    .index(indexName)
+                    .query(query -> query
+                            .term(term -> term
+                                    .field("documentId")
+                                    .value(documentId)
+                            )
+                    )
+            ).count();
+        } catch (IOException e) {
+            log.error("[KB][ES] 统计文档索引数量失败，indexName={}, documentId={}", indexName, documentId, e);
+            throw new BusinessException(ResultCode.ES_INDEX_COUNT_FAILED, "统计 Elasticsearch 文档索引数量失败");
+        }
+    }
+
+    @Override
+    public void deleteByDocumentIdAndExcludeChunkIds(Long documentId, List<Long> keepChunkIds) {
+        if (documentId == null) {
+            throw new BusinessException(ResultCode.INVALID_PARAMETER, "documentId 不能为空");
+        }
+        if (keepChunkIds == null || keepChunkIds.isEmpty()) {
+            deleteByDocumentId(documentId);
+            return;
+        }
+
+        String indexName = getIndexName();
+        try {
+            List<FieldValue> keepValues = keepChunkIds.stream().map(FieldValue::of).toList();
+            elasticsearchClient.deleteByQuery(request -> request
+                    .index(indexName)
+                    .query(query -> query
+                            .bool(bool -> bool
+                                    .must(must -> must.term(term -> term.field("documentId").value(documentId)))
+                                    .mustNot(mustNot -> mustNot.terms(terms -> terms
+                                            .field("chunkId")
+                                            .terms(values -> values.value(keepValues))
+                                    ))
+                            )
+                    )
+            );
+            log.info("[KB][ES] 删除旧分块索引完成 - indexName={}, documentId={}, keepChunkCount={}",
+                    indexName, documentId, keepChunkIds.size());
+        } catch (IOException e) {
+            log.error("[KB][ES] 删除旧分块索引失败，indexName={}, documentId={}", indexName, documentId, e);
+            throw new BusinessException(ResultCode.ES_INDEX_DELETE_FAILED, "删除旧分块索引失败");
         }
     }
 

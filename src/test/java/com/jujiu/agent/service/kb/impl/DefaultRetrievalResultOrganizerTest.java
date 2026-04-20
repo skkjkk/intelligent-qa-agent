@@ -94,7 +94,7 @@ class DefaultRetrievalResultOrganizerTest {
     @Test
     @DisplayName("同一文档命中过多时应限制每文档最大保留数量")
     void organize_shouldLimitChunksPerDocument_whenSameDocumentHasTooManyChunks() {
-        // 1. 构造同一文档下 3 个不同 chunk，当前第一阶段策略应最多保留 2 个。
+        // 1. 构造同一文档下 3 个不同 chunk，当前实现策略应最多保留 3 个。
         ChunkSearchResult first = buildResult(
                 11L,
                 101L,
@@ -125,18 +125,18 @@ class DefaultRetrievalResultOrganizerTest {
         // 2. 执行整理逻辑。
         OrganizedRetrievalResult result = organizer.organize(List.of(first, second, third), "ACL 设计");
 
-        // 3. 校验整理后最多保留 2 条，避免单文档霸榜。
+        // 3. 校验整理后最多保留 3 条，避免单文档无限霸榜。
         assertNotNull(result);
         assertEquals(3, result.getRawResultCount());
-        assertEquals(2, result.getFinalResultCount());
-        assertEquals(2, result.getFinalResults().size());
-        assertEquals(2, result.getCitations().size());
+        assertEquals(3, result.getFinalResultCount());
+        assertEquals(3, result.getFinalResults().size());
+        assertEquals(3, result.getCitations().size());
 
-        // 4. 确认被保留的两个 chunk 都来自同一文档，且数量被限制住。
+        // 4. 确认被保留的三个 chunk 都来自同一文档，且数量被限制住。
         long document101Count = result.getFinalResults().stream()
                 .filter(item -> item.getDocumentId().equals(101L))
                 .count();
-        assertEquals(2, document101Count);
+        assertEquals(3, document101Count);
     }
 
     @Test

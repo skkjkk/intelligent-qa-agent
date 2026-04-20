@@ -3,6 +3,8 @@ package com.jujiu.agent.service.kb;
 import com.jujiu.agent.model.entity.KbChunk;
 import com.jujiu.agent.model.entity.KbDocument;
 
+import java.util.List;
+
 /**
  * Elasticsearch 索引服务接口。
  *
@@ -41,4 +43,21 @@ public interface ElasticsearchIndexService {
      * 确保知识库分块索引存在。
      */
     void ensureIndexExists();
+
+    /**
+     * 统计指定文档 ID 下的分块索引数量。
+     *
+     * @param documentId 文档 ID
+     * @return 分块索引数量
+     */
+    Long countByDocumentId(Long documentId);
+
+    /**
+     * 删除指定文档 ID 下的分块索引，排除指定分块 ID。
+     *
+     * @param documentId 文档 ID
+     * @param keepChunkIds 要保留的分块 ID 列表
+     */
+    void deleteByDocumentIdAndExcludeChunkIds(Long documentId, List<Long> keepChunkIds);
+
 }

@@ -4,6 +4,7 @@ import com.jujiu.agent.model.dto.request.UploadDocumentRequest;
 import com.jujiu.agent.model.dto.response.DocumentProcessStatusResponse;
 import com.jujiu.agent.model.dto.response.KbBatchOperationResponse;
 import com.jujiu.agent.model.dto.response.KbDocumentResponse;
+import com.jujiu.agent.model.dto.response.KbIndexDiagnosisResponse;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.util.List;
@@ -103,5 +104,21 @@ public interface DocumentService {
      * @param userId 当前用户 ID
      */
     KbBatchOperationResponse rebuildFailedIndexes(Long userId);
-    
+
+    /**
+     * 诊断文档索引状态。
+     *
+     * @param userId 当前用户 ID
+     * @param documentId 文档 ID
+     * @return 索引诊断结果
+     */
+    KbIndexDiagnosisResponse diagnoseIndex(Long userId, Long documentId);
+
+    /**
+     * 修复文档索引不一致状态。
+     *
+     * @param userId 当前用户 ID
+     * @return 修复操作结果
+     */
+    KbBatchOperationResponse repairInconsistentIndexState(Long userId);
 }

@@ -186,13 +186,16 @@ class DocumentServiceImplTest {
         when(documentAclService.canManage(1001L, document)).thenReturn(true);
         when(kbChunkRepository.selectList(any())).thenReturn(List.of(chunk), List.of(chunk));
         when(embeddingService.embedDocument(anyString())).thenReturn(new float[]{0.1f, 0.2f});
+        when(elasticsearchIndexService.countByDocumentId(1L)).thenReturn(1L);
 
         documentService.rebuildIndex(1001L, 1L);
 
         verify(documentAclService, atLeastOnce()).canManage(1001L, document);
-        verify(elasticsearchIndexService, times(1)).deleteByDocumentId(1L);
+        verify(elasticsearchIndexService, times(1))
+                .deleteByDocumentIdAndExcludeChunkIds(eq(1L), eq(List.of(11L)));
         verify(elasticsearchIndexService, times(1)).ensureIndexExists();
         verify(elasticsearchIndexService, times(1)).indexChunk(eq(document), eq(chunk), any());
+        verify(elasticsearchIndexService, times(1)).countByDocumentId(1L);
     }
 
     @Test
@@ -277,6 +280,8 @@ class DocumentServiceImplTest {
 
         when(embeddingService.embedDocument(anyString()))
                 .thenReturn(new float[]{0.1f, 0.2f});
+        when(elasticsearchIndexService.countByDocumentId(11L)).thenReturn(1L);
+        when(elasticsearchIndexService.countByDocumentId(12L)).thenReturn(1L);
 
         KbBatchOperationResponse response = documentService.rebuildFailedIndexes(1001L);
 
@@ -290,12 +295,17 @@ class DocumentServiceImplTest {
         verify(documentAclService, atLeastOnce()).canManage(1001L, manageableFailedDocument2);
         verify(documentAclService, times(1)).canManage(1001L, readOnlyFailedDocument);
 
-        verify(elasticsearchIndexService, times(2)).deleteByDocumentId(anyLong());
+        verify(elasticsearchIndexService, times(1))
+                .deleteByDocumentIdAndExcludeChunkIds(eq(11L), eq(List.of(201L)));
+        verify(elasticsearchIndexService, times(1))
+                .deleteByDocumentIdAndExcludeChunkIds(eq(12L), eq(List.of(202L)));
         verify(elasticsearchIndexService, times(2)).ensureIndexExists();
         verify(elasticsearchIndexService, times(2)).indexChunk(any(KbDocument.class), any(KbChunk.class), any());
+        verify(elasticsearchIndexService, times(1)).countByDocumentId(11L);
+        verify(elasticsearchIndexService, times(1)).countByDocumentId(12L);
 
         verify(kbDocumentRepository, never()).selectById(13L);
-        verify(elasticsearchIndexService, never()).deleteByDocumentId(13L);
+        verify(elasticsearchIndexService, never()).deleteByDocumentIdAndExcludeChunkIds(eq(13L), any());
     }
 
     private KbDocument buildDocument(Long id, Long ownerUserId, String visibility) {

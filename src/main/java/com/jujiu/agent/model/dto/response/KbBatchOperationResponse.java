@@ -36,6 +36,12 @@ public class KbBatchOperationResponse {
     @Schema(description = "失败文档ID列表")
     private List<Long> failedDocumentIds;
 
+    @Schema(description = "失败明细")
+    private List<KbIndexFailureDetailResponse> failedDetails;
+
+    @Schema(description = "失败分类汇总")
+    private List<KbDimensionCountResponse> failedCategorySummary;
+    
     @Schema(description = "说明信息")
     private String message;
 }

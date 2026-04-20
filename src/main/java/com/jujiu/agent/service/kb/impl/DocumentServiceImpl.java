@@ -6,9 +6,7 @@ import com.jujiu.agent.common.exception.BusinessException;
 import com.jujiu.agent.common.result.ResultCode;
 import com.jujiu.agent.config.KnowledgeBaseProperties;
 import com.jujiu.agent.model.dto.request.UploadDocumentRequest;
-import com.jujiu.agent.model.dto.response.DocumentProcessStatusResponse;
-import com.jujiu.agent.model.dto.response.KbBatchOperationResponse;
-import com.jujiu.agent.model.dto.response.KbDocumentResponse;
+import com.jujiu.agent.model.dto.response.*;
 import com.jujiu.agent.model.entity.KbChunk;
 import com.jujiu.agent.model.entity.KbDocument;
 import com.jujiu.agent.model.entity.KbDocumentGroup;
@@ -33,7 +31,9 @@ import java.io.IOException;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 /**
@@ -526,15 +526,16 @@ public class DocumentServiceImpl implements DocumentService {
         // 5. 逐个执行索引，统计成功与失败数量
         int successCount = 0;
         List<Long> failedDocumentIds = new ArrayList<>();
+        List<KbIndexFailureDetailResponse> failedDetails = new ArrayList<>();
 
         for (KbDocument document : pendingDocuments) {
             try {
                 indexDocument(userId, document.getId());
                 successCount++;
             } catch (Exception e) {
+                KbIndexFailureDetailResponse detail = mapIndexFailure(document.getId(), e, "INDEX");
+                failedDetails.add(detail);
                 failedDocumentIds.add(document.getId());
-                log.error("[KB][INDEX][ACL] 文档索引失败 - userId={}, documentId={}",
-                        userId, document.getId(), e);
             }
         }
 
@@ -544,6 +545,8 @@ public class DocumentServiceImpl implements DocumentService {
                 .successCount(successCount)
                 .failedCount(failedDocumentIds.size())
                 .failedDocumentIds(failedDocumentIds)
+                .failedDetails(failedDetails)
+                .failedCategorySummary(summarizeFailureCategories(failedDetails))
                 .message(failedDocumentIds.isEmpty() ? "待处理文档索引任务执行成功" : "待处理文档索引任务部分失败")
                 .build();
     }
@@ -802,34 +805,31 @@ public class DocumentServiceImpl implements DocumentService {
      */
     @Override
     public void rebuildIndex(Long userId, Long documentId) {
-        // 1. 参数校验
-        if (userId == null || userId <= 0) {
-            throw new BusinessException(ResultCode.INVALID_PARAMETER, "userId 不能为空");
-        }
-        if (documentId == null || documentId <= 0) {
-            throw new BusinessException(ResultCode.INVALID_PARAMETER, "documentId 不能为空");
-        }
-
-        // 2. 校验文档是否满足重建索引条件
+        // 1. 校验文档归属与可访问性
         KbDocument document = validateDocumentForRebuild(userId, documentId);
+        
+        // 2. 删除 Elasticsearch 中已有索引数据
+        List<KbChunk> chunks = listEnabledChunks(documentId);
+        List<Long> keepChunkIds = chunks.stream().map(KbChunk::getId).toList();
 
-        log.info("[KB][REBUILD] 开始重建文档索引 - userId={}, documentId={}", userId, documentId);
-        log.info("[KB][REBUILD] 文档已通过重建前置校验，准备删除旧索引 - userId={}, documentId={}, chunkCount={}",
-                userId, documentId, document.getChunkCount());
+        // 3. 重新执行文档索引流程
+        document.setIndexStatus(KbProcessStatus.PROCESSING.name());
+        document.setUpdatedAt(LocalDateTime.now());
+        kbDocumentRepository.updateById(document);
 
-        // 3. 尝试删除 Elasticsearch 中的旧索引数据
-        try {
-            elasticsearchIndexService.deleteByDocumentId(documentId);
-            log.info("[KB][REBUILD] 已删除旧索引数据 - userId={}, documentId={}", userId, documentId);
-        } catch (Exception e) {
-            log.warn("[KB][REBUILD] 删除旧索引数据失败，继续尝试重建 - userId={}, documentId={}",
-                    userId, documentId, e);
-        }
-
-        // 4. 重新执行文档索引流程
+        // 4. 重新索引文档
         indexDocument(userId, documentId);
 
-        log.info("[KB][REBUILD] 文档索引重建完成 - userId={}, documentId={}", userId, documentId);
+        // 5. 校验索引重建结果
+        elasticsearchIndexService.deleteByDocumentIdAndExcludeChunkIds(documentId, keepChunkIds);
+
+        // 6. 校验索引重建结果
+        Long esCount = elasticsearchIndexService.countByDocumentId(documentId);
+        if (esCount < keepChunkIds.size()) {
+            // 7. 校验索引重建结果
+            throw new BusinessException(ResultCode.INDEX_REBUILD_VERIFY_FAILED,
+                    "重建校验失败，esCount=" + esCount + ", expected>=" + keepChunkIds.size());
+        }
     }
 
     /**
@@ -879,15 +879,16 @@ public class DocumentServiceImpl implements DocumentService {
         // 5. 逐个执行重建索引，统计成功与失败数量
         int successCount = 0;
         List<Long> failedDocumentIds = new ArrayList<>();
+        List<KbIndexFailureDetailResponse> failedDetails = new ArrayList<>();
 
         for (KbDocument document : failedDocuments) {
             try {
                 rebuildIndex(userId, document.getId());
                 successCount++;
             } catch (Exception e) {
+                KbIndexFailureDetailResponse detail = mapIndexFailure(document.getId(), e, "INDEX");
+                failedDetails.add(detail);
                 failedDocumentIds.add(document.getId());
-                log.error("[KB][REBUILD][ACL] 文档索引重建失败 - userId={}, documentId={}",
-                        userId, document.getId(), e);
             }
         }
 
@@ -897,6 +898,8 @@ public class DocumentServiceImpl implements DocumentService {
                 .successCount(successCount)
                 .failedCount(failedDocumentIds.size())
                 .failedDocumentIds(failedDocumentIds)
+                .failedDetails(failedDetails)
+                .failedCategorySummary(summarizeFailureCategories(failedDetails))
                 .message(failedDocumentIds.isEmpty() ? "失败索引批量重建任务执行成功" : "失败索引批量重建任务部分失败")
                 .build();
     }
@@ -1066,6 +1069,180 @@ public class DocumentServiceImpl implements DocumentService {
                 .visibility(document.getVisibility())
                 .createdAt(document.getCreatedAt())
                 .build();
+    }
+
+    private KbIndexFailureDetailResponse mapIndexFailure(Long documentId, Exception e, String stage) {
+        if (e instanceof BusinessException be) {
+            ResultCode code = be.getResultCode();
+            if (code == ResultCode.EMBEDDING_REMOTE_TIMEOUT) {
+                return detail(documentId, "EMBEDDING", code.name(), stage, true, be.getMessage());
+            }
+            if (code == ResultCode.EMBEDDING_REMOTE_ERROR || code == ResultCode.EMBEDDING_REMOTE_RATE_LIMITED) {
+                return detail(documentId, "EMBEDDING", code.name(), stage, true, be.getMessage());
+            }
+            if (code == ResultCode.DOCUMENT_NOT_FOUND || code == ResultCode.INVALID_PARAMETER) {
+                return detail(documentId, "DOCUMENT", code.name(), stage, false, be.getMessage());
+            }
+        }
+        return detail(documentId, "UNKNOWN", "UNKNOWN_ERROR", stage, false, e.getMessage());
+    }
+
+    @Override
+    public KbIndexDiagnosisResponse diagnoseIndex(Long userId, Long documentId) {
+        KbDocument doc = requireManageableDocument(userId, documentId);
+        Integer activeChunkCount = kbChunkRepository.selectCount(new LambdaQueryWrapper<KbChunk>()
+                .eq(KbChunk::getDocumentId, documentId)
+                .eq(KbChunk::getEnabled, 1)).intValue();
+
+        Long esChunkCount = elasticsearchIndexService.countByDocumentId(documentId);
+
+        List<String> anomalies = new ArrayList<>();
+        if (!KbProcessStatus.SUCCESS.name().equals(doc.getParseStatus()) && activeChunkCount > 0) {
+            anomalies.add("PARSE_STATUS_NOT_SUCCESS_BUT_HAS_CHUNKS");
+        }
+        if (KbProcessStatus.SUCCESS.name().equals(doc.getIndexStatus()) && esChunkCount == 0) {
+            anomalies.add("INDEX_STATUS_SUCCESS_BUT_ES_EMPTY");
+        }
+        if (KbProcessStatus.FAILED.name().equals(doc.getIndexStatus()) && esChunkCount > 0) {
+            anomalies.add("INDEX_STATUS_FAILED_BUT_ES_EXISTS");
+        }
+        if (esChunkCount != activeChunkCount.longValue()) {
+            anomalies.add("ES_CHUNK_COUNT_MISMATCH");
+        }
+
+        boolean consistent = anomalies.isEmpty();
+        String repairAction = consistent ? "NONE" : "REINDEX";
+
+        return KbIndexDiagnosisResponse.builder()
+                .documentId(documentId)
+                .parseStatus(doc.getParseStatus())
+                .indexStatus(doc.getIndexStatus())
+                .dbChunkCount(doc.getChunkCount())
+                .activeChunkCount(activeChunkCount)
+                .esChunkCount(esChunkCount)
+                .consistent(consistent)
+                .anomalies(anomalies)
+                .repairAction(repairAction)
+                .build();
+    }
+
+    /**
+     * 修复知识库文档的索引状态。
+     *
+     * @param userId 用户ID
+     * @return 修复操作结果
+     */
+    @Override
+    public KbBatchOperationResponse repairInconsistentIndexState(Long userId) {
+        // 1. 校验参数
+        if (userId == null || userId <= 0) {
+            throw new BusinessException(ResultCode.INVALID_PARAMETER, "userId 不能为空");
+        }
+
+        // 2. 查询可修复文档
+        List<KbDocument> candidateDocuments = kbDocumentRepository.selectList(
+                new LambdaQueryWrapper<KbDocument>()
+                        .eq(KbDocument::getDeleted, 0)
+                        .eq(KbDocument::getEnabled, 1)
+                        .eq(KbDocument::getParseStatus, KbProcessStatus.SUCCESS.name())
+                        .gt(KbDocument::getChunkCount, 0)
+                        .orderByAsc(KbDocument::getUpdatedAt)
+        );
+
+        // 3. 过滤可修复文档
+        List<KbDocument> manageableDocuments = filterManageableDocuments(userId, candidateDocuments, "REPAIR_INCONSISTENT");
+
+        // 4. 校验可修复文档
+        if (manageableDocuments.isEmpty()) {
+            return KbBatchOperationResponse.builder()
+                    .totalCount(0)
+                    .successCount(0)
+                    .failedCount(0)
+                    .failedDocumentIds(List.of())
+                    .failedDetails(List.of())
+                    .failedCategorySummary(List.of())
+                    .message("当前用户无可修复文档")
+                    .build();
+        }
+
+        // 5. 修复索引状态
+        int successCount = 0;
+        List<Long> failedDocumentIds = new ArrayList<>();
+        List<KbIndexFailureDetailResponse> failedDetails = new ArrayList<>();
+
+        // 6. 修复索引状态
+        for (KbDocument document : manageableDocuments) {
+            try {
+                KbIndexDiagnosisResponse diagnosis = diagnoseIndex(userId, document.getId());
+                if (Boolean.TRUE.equals(diagnosis.getConsistent())) {
+                    successCount++;
+                    continue;
+                }
+                rebuildIndex(userId, document.getId());
+                successCount++;
+            } catch (Exception e) {
+                failedDocumentIds.add(document.getId());
+                failedDetails.add(mapIndexFailure(document.getId(), e, "REPAIR"));
+            }
+        }
+
+        // 7. 返回修复结果
+        return KbBatchOperationResponse.builder()
+                .totalCount(manageableDocuments.size())
+                .successCount(successCount)
+                .failedCount(failedDocumentIds.size())
+                .failedDocumentIds(failedDocumentIds)
+                .failedDetails(failedDetails)
+                .failedCategorySummary(summarizeFailureCategories(failedDetails))
+                .message(failedDocumentIds.isEmpty() ? "状态修复任务执行成功" : "状态修复任务部分失败")
+                .build();
+    }
+
+    /**
+     * 列出文档的所有启用分块。
+     *
+     * @param documentId 文档ID
+     * @return 启用分块列表
+     */
+    private List<KbChunk> listEnabledChunks(Long documentId) {
+        return kbChunkRepository.selectList(
+                new LambdaQueryWrapper<KbChunk>()
+                        .eq(KbChunk::getDocumentId, documentId)
+                        .eq(KbChunk::getEnabled, 1)
+                        .orderByAsc(KbChunk::getChunkIndex)
+        );
+    }
+
+    private KbIndexFailureDetailResponse detail(Long documentId,
+                                                String category,
+                                                String code,
+                                                String stage,
+                                                boolean retriable,
+                                                String message) {
+        return KbIndexFailureDetailResponse.builder()
+                .documentId(documentId)
+                .category(category)
+                .code(code)
+                .stage(stage)
+                .retriable(retriable)
+                .message(message)
+                .build();
+    }
+
+    private List<KbDimensionCountResponse> summarizeFailureCategories(List<KbIndexFailureDetailResponse> failedDetails) {
+        Map<String, Long> counter = new HashMap<>();
+        for (KbIndexFailureDetailResponse detail : failedDetails) {
+            String key = detail.getCategory() == null ? "UNKNOWN" : detail.getCategory();
+            counter.put(key, counter.getOrDefault(key, 0L) + 1L);
+        }
+        List<KbDimensionCountResponse> summary = new ArrayList<>();
+        for (Map.Entry<String, Long> entry : counter.entrySet()) {
+            summary.add(KbDimensionCountResponse.builder()
+                    .name(entry.getKey())
+                    .count(entry.getValue())
+                    .build());
+        }
+        return summary;
     }
 
 }

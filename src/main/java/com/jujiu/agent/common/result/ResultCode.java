@@ -230,6 +230,31 @@ public enum ResultCode {
      * Embedding 向量维度异常
      */
     EMBEDDING_DIMENSION_MISMATCH(4022, "Embedding 向量维度异常"),
+
+    /**
+     * 索引重建校验失败
+     */
+    INDEX_REBUILD_VERIFY_FAILED(4023, "索引重建校验失败"),
+    /**
+     * 索引诊断失败
+     */
+    INDEX_DIAGNOSIS_FAILED(4024, "索引诊断失败"),
+    /**
+     * 索引状态不一致
+     */
+    INDEX_STATE_INCONSISTENT(4025, "索引状态不一致"),
+    /**
+     * 索引修复失败
+     */
+    INDEX_REPAIR_FAILED(4026, "索引修复失败"),
+    /**
+     * ES 索引删除失败
+     */
+    ES_INDEX_DELETE_FAILED(4027, "ES索引删除失败"),
+    /**
+     * ES 索引计数失败
+     */
+    ES_INDEX_COUNT_FAILED(4028, "ES索引计数失败"),
     
     /**
      * 服务器内部错误
