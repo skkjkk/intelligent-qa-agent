@@ -3,7 +3,7 @@
 //import co.elastic.clients.elasticsearch.ElasticsearchClient;
 //import co.elastic.clients.elasticsearch.core.PingResponse;
 //import com.jujiu.agent.config.KnowledgeBaseProperties;
-//import com.jujiu.agent.model.dto.response.KbHealthResponse;
+//import com.jujiu.agent.module.kb.api.response.KbHealthResponse;
 //import io.minio.BucketExistsArgs;
 //import io.minio.MinioClient;
 //import org.junit.jupiter.api.BeforeEach;

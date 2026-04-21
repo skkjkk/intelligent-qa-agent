@@ -33,5 +33,6 @@ application-prod.yml
 
 # Local docs and tooling state
 docs/
+review-reports/
 
 scripts/

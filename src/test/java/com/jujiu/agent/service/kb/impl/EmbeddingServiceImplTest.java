@@ -1,11 +1,12 @@
 package com.jujiu.agent.service.kb.impl;
 
-import com.jujiu.agent.common.exception.BusinessException;
-import com.jujiu.agent.common.result.ResultCode;
-import com.jujiu.agent.config.KnowledgeBaseProperties;
-import com.jujiu.agent.service.kb.embedding.EmbeddingProviderClient;
-import com.jujiu.agent.service.kb.embedding.EmbeddingScene;
-import com.jujiu.agent.service.kb.embedding.RedisEmbeddingCache;
+import com.jujiu.agent.module.kb.application.service.impl.EmbeddingServiceImpl;
+import com.jujiu.agent.shared.exception.BusinessException;
+import com.jujiu.agent.shared.result.ResultCode;
+import com.jujiu.agent.module.kb.infrastructure.config.KnowledgeBaseProperties;
+import com.jujiu.agent.module.kb.infrastructure.embedding.EmbeddingProviderClient;
+import com.jujiu.agent.module.kb.infrastructure.embedding.EmbeddingScene;
+import com.jujiu.agent.module.kb.infrastructure.embedding.RedisEmbeddingCache;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;

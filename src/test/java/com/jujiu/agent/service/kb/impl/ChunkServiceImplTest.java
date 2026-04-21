@@ -1,8 +1,9 @@
 package com.jujiu.agent.service.kb.impl;
 
-import com.jujiu.agent.config.KnowledgeBaseProperties;
-import com.jujiu.agent.model.entity.KbChunk;
-import com.jujiu.agent.repository.KbChunkRepository;
+import com.jujiu.agent.module.kb.infrastructure.config.KnowledgeBaseProperties;
+import com.jujiu.agent.module.kb.application.service.impl.ChunkServiceImpl;
+import com.jujiu.agent.module.kb.domain.entity.KbChunk;
+import com.jujiu.agent.module.kb.infrastructure.mapper.KbChunkMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -43,20 +44,20 @@ import static org.mockito.Mockito.*;
  */
 class ChunkServiceImplTest {
 
-    private KbChunkRepository kbChunkRepository;
+    private KbChunkMapper kbChunkMapper;
     private KnowledgeBaseProperties properties;
     private ChunkServiceImpl chunkService;
 
     @BeforeEach
     void setUp() {
-        kbChunkRepository = mock(KbChunkRepository.class);
+        kbChunkMapper = mock(KbChunkMapper.class);
 
         properties = new KnowledgeBaseProperties();
         properties.getChunking().setDefaultSize(700);
         properties.getChunking().setDefaultOverlap(80);
         properties.getChunking().setMaxSize(1200);
 
-        chunkService = new ChunkServiceImpl(kbChunkRepository, properties);
+        chunkService = new ChunkServiceImpl(kbChunkMapper, properties);
     }
 
     @Test
@@ -200,6 +201,6 @@ class ChunkServiceImplTest {
 
         assertNotNull(chunks);
         assertFalse(chunks.isEmpty());
-        verify(kbChunkRepository, times(chunks.size())).insert(any(KbChunk.class));
+        verify(kbChunkMapper, times(chunks.size())).insert(any(KbChunk.class));
     }
 }

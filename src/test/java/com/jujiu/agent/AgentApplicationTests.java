@@ -1,6 +1,6 @@
 package com.jujiu.agent;
 
-import com.jujiu.agent.tool.ToolRegistry;
+import com.jujiu.agent.module.tool.application.registry.ToolRegistry;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.TestConfiguration;

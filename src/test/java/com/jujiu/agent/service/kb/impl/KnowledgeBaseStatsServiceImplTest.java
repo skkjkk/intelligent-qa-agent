@@ -1,10 +1,11 @@
 package com.jujiu.agent.service.kb.impl;
 
-import com.jujiu.agent.common.exception.BusinessException;
-import com.jujiu.agent.model.dto.response.KbStatsOverviewResponse;
-import com.jujiu.agent.repository.KbDocumentRepository;
-import com.jujiu.agent.repository.KbQueryFeedbackRepository;
-import com.jujiu.agent.repository.KbQueryLogRepository;
+import com.jujiu.agent.module.kb.application.service.impl.KnowledgeBaseStatsServiceImpl;
+import com.jujiu.agent.shared.exception.BusinessException;
+import com.jujiu.agent.module.kb.api.response.KbStatsOverviewResponse;
+import com.jujiu.agent.module.kb.infrastructure.mapper.KbDocumentMapper;
+import com.jujiu.agent.module.kb.infrastructure.mapper.KbQueryFeedbackMapper;
+import com.jujiu.agent.module.kb.infrastructure.mapper.KbQueryLogMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -19,18 +20,18 @@ import static org.mockito.Mockito.*;
 
 class KnowledgeBaseStatsServiceImplTest {
 
-    private KbDocumentRepository kbDocumentRepository;
-    private KbQueryLogRepository kbQueryLogRepository;
-    private KbQueryFeedbackRepository kbQueryFeedbackRepository;
+    private KbDocumentMapper kbDocumentMapper;
+    private KbQueryLogMapper kbQueryLogMapper;
+    private KbQueryFeedbackMapper kbQueryFeedbackMapper;
     private KnowledgeBaseStatsServiceImpl service;
 
     @BeforeEach
     void setUp() {
-        kbDocumentRepository = mock(KbDocumentRepository.class);
-        kbQueryLogRepository = mock(KbQueryLogRepository.class);
-        kbQueryFeedbackRepository = mock(KbQueryFeedbackRepository.class);
+        kbDocumentMapper = mock(KbDocumentMapper.class);
+        kbQueryLogMapper = mock(KbQueryLogMapper.class);
+        kbQueryFeedbackMapper = mock(KbQueryFeedbackMapper.class);
         service = new KnowledgeBaseStatsServiceImpl(
-                kbDocumentRepository, kbQueryLogRepository, kbQueryFeedbackRepository
+                kbDocumentMapper, kbQueryLogMapper, kbQueryFeedbackMapper
         );
     }
 
@@ -40,33 +41,33 @@ class KnowledgeBaseStatsServiceImplTest {
         Long userId = 1001L;
         Long kbId = 1L;
 
-        when(kbDocumentRepository.selectCount(any())).thenReturn(
+        when(kbDocumentMapper.selectCount(any())).thenReturn(
                 10L, // totalDocuments
                 8L,  // successDocuments
                 1L,  // processingDocuments
                 1L   // failedDocuments
         );
 
-        when(kbQueryLogRepository.aggregateSummary(userId, kbId)).thenReturn(Map.of(
+        when(kbQueryLogMapper.aggregateSummary(userId, kbId)).thenReturn(Map.of(
                 "totalQueries", 50L,
                 "successQueries", 45L
         ));
 
-        when(kbQueryFeedbackRepository.aggregateQuality(userId, kbId)).thenReturn(Map.of(
+        when(kbQueryFeedbackMapper.aggregateQuality(userId, kbId)).thenReturn(Map.of(
                 "totalFeedbacks", 20L,
                 "helpfulCount", 15L,
                 "unhelpfulCount", 5L,
                 "avgRating", 4.2
         ));
 
-        when(kbDocumentRepository.countCreatedSince(eq(userId), eq(kbId), any())).thenReturn(3L, 12L);
-        when(kbQueryLogRepository.countSince(eq(userId), eq(kbId), any())).thenReturn(9L, 35L);
+        when(kbDocumentMapper.countCreatedSince(eq(userId), eq(kbId), any())).thenReturn(3L, 12L);
+        when(kbQueryLogMapper.countSince(eq(userId), eq(kbId), any())).thenReturn(9L, 35L);
 
-        when(kbQueryLogRepository.aggregateTrend(eq(userId), eq(kbId), any())).thenReturn(List.of(
+        when(kbQueryLogMapper.aggregateTrend(eq(userId), eq(kbId), any())).thenReturn(List.of(
                 Map.of("dayVal", "2026-04-19", "dayCount", 2L),
                 Map.of("dayVal", "2026-04-20", "dayCount", 3L)
         ));
-        when(kbDocumentRepository.aggregateCreatedTrend(eq(userId), eq(kbId), any())).thenReturn(List.of(
+        when(kbDocumentMapper.aggregateCreatedTrend(eq(userId), eq(kbId), any())).thenReturn(List.of(
                 Map.of("dayVal", "2026-04-19", "dayCount", 1L),
                 Map.of("dayVal", "2026-04-20", "dayCount", 2L)
         ));
@@ -107,6 +108,6 @@ class KnowledgeBaseStatsServiceImplTest {
                 () -> service.getOverview(null, 1L, 30, ZoneId.of("Asia/Shanghai"), 10));
 
         assertTrue(ex.getMessage().contains("userId 不能为空"));
-        verifyNoInteractions(kbDocumentRepository, kbQueryLogRepository, kbQueryFeedbackRepository);
+        verifyNoInteractions(kbDocumentMapper, kbQueryLogMapper, kbQueryFeedbackMapper);
     }
 }

@@ -11,7 +11,11 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
  * @since 2026-03-19
  */
 @SpringBootApplication
-@MapperScan("com.jujiu.agent.repository")
+@MapperScan({"com.jujiu.agent.module.auth.infrastructure.mapper",
+        "com.jujiu.agent.module.kb.infrastructure.mapper",
+        "com.jujiu.agent.module.tool.infrastructure.mapper",
+        "com.jujiu.agent.module.chat.infrastructure.mapper"
+})
 public class AgentApplication {
 
     public static void main(String[] args) {

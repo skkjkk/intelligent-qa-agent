@@ -6,15 +6,15 @@ import co.elastic.clients.elasticsearch.core.SearchResponse;
 import co.elastic.clients.elasticsearch.core.search.Hit;
 import co.elastic.clients.elasticsearch.core.search.HitsMetadata;
 import co.elastic.clients.util.ObjectBuilder;
-import com.jujiu.agent.common.result.ChunkSearchResult;
-import com.jujiu.agent.config.KnowledgeBaseProperties;
-import com.jujiu.agent.model.entity.KbDocument;
-import com.jujiu.agent.search.KbChunkIndexDocument;
-import com.jujiu.agent.repository.KbChunkRepository;
-import com.jujiu.agent.repository.KbDocumentRepository;
-import com.jujiu.agent.service.kb.DocumentAclService;
-import com.jujiu.agent.service.kb.EmbeddingService;
-import com.jujiu.agent.service.kb.RetrievalRerankService;
+import com.jujiu.agent.module.kb.application.service.impl.VectorSearchServiceImpl;
+import com.jujiu.agent.module.kb.application.model.ChunkSearchResult;
+import com.jujiu.agent.module.kb.infrastructure.config.KnowledgeBaseProperties;
+import com.jujiu.agent.module.kb.domain.entity.KbDocument;
+import com.jujiu.agent.module.kb.infrastructure.search.KbChunkIndexDocument;
+import com.jujiu.agent.module.kb.infrastructure.mapper.KbDocumentMapper;
+import com.jujiu.agent.module.kb.application.service.DocumentAclService;
+import com.jujiu.agent.module.kb.application.service.EmbeddingService;
+import com.jujiu.agent.module.kb.application.service.RetrievalRerankService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -32,17 +32,17 @@ import static org.mockito.Mockito.*;
 class VectorSearchServiceImplTest {
 
     private EmbeddingService embeddingService;
-    private KbDocumentRepository kbDocumentRepository;
+    private KbDocumentMapper kbDocumentMapper;
     private ElasticsearchClient elasticsearchClient;
     private KnowledgeBaseProperties knowledgeBaseProperties;
     private DocumentAclService documentAclService;
     private VectorSearchServiceImpl vectorSearchService;
-    private com.jujiu.agent.service.kb.RetrievalRerankService retrievalRerankService;
+    private RetrievalRerankService retrievalRerankService;
 
     @BeforeEach
     void setUp() {
         embeddingService = mock(EmbeddingService.class);
-        kbDocumentRepository = mock(KbDocumentRepository.class);
+        kbDocumentMapper = mock(KbDocumentMapper.class);
         elasticsearchClient = mock(ElasticsearchClient.class);
         knowledgeBaseProperties = new KnowledgeBaseProperties();
         knowledgeBaseProperties.getElasticsearch().setIndexName("kb_chunks_v2");
@@ -52,7 +52,7 @@ class VectorSearchServiceImplTest {
 
         vectorSearchService = new VectorSearchServiceImpl(
                 embeddingService,
-                kbDocumentRepository,
+                kbDocumentMapper,
                 elasticsearchClient,
                 knowledgeBaseProperties,
                 documentAclService,
@@ -72,7 +72,7 @@ class VectorSearchServiceImplTest {
 
         verify(documentAclService, times(1)).listReadableDocumentIds(1001L, 1L);
         verifyNoInteractions(embeddingService);
-        verifyNoInteractions(kbDocumentRepository);
+        verifyNoInteractions(kbDocumentMapper);
     }
 
     @Test
@@ -81,7 +81,7 @@ class VectorSearchServiceImplTest {
         KbDocument readableDocument = buildDocument(1L, 2002L, "PRIVATE");
 
         when(documentAclService.listReadableDocumentIds(1001L, 1L)).thenReturn(Set.of(1L));
-        when(kbDocumentRepository.selectList(any())).thenReturn(List.of(readableDocument));
+        when(kbDocumentMapper.selectList(any())).thenReturn(List.of(readableDocument));
         when(embeddingService.embedQuery("如何改造 ACL")).thenReturn(new float[]{0.1f, 0.2f});
         mockEmptyEsSearch();
         
@@ -92,7 +92,7 @@ class VectorSearchServiceImplTest {
         assertTrue(results.isEmpty());
 
         verify(documentAclService, times(1)).listReadableDocumentIds(1001L, 1L);
-        verify(kbDocumentRepository, times(1)).selectList(any());
+        verify(kbDocumentMapper, times(1)).selectList(any());
         verify(embeddingService, times(1)).embedQuery("如何改造 ACL");
         verify(elasticsearchClient, times(2)).search(
                 ArgumentMatchers.<Function<SearchRequest.Builder, ObjectBuilder<SearchRequest>>>any(),
@@ -107,7 +107,7 @@ class VectorSearchServiceImplTest {
         KbDocument readableDocument = buildDocument(1L, 2002L, "PRIVATE");
 
         when(documentAclService.listReadableDocumentIds(1001L, 1L)).thenReturn(Set.of(1L));
-        when(kbDocumentRepository.selectList(any())).thenReturn(List.of(readableDocument));
+        when(kbDocumentMapper.selectList(any())).thenReturn(List.of(readableDocument));
         when(embeddingService.embedQuery("ACL 改造")).thenReturn(new float[]{0.1f, 0.2f});
         mockEsSearchResponses(
                 buildSearchResponse(List.of()),
@@ -129,7 +129,7 @@ class VectorSearchServiceImplTest {
         KbDocument readableDocument = buildDocument(1L, 2002L, "PRIVATE");
 
         when(documentAclService.listReadableDocumentIds(1001L, 1L)).thenReturn(Set.of(1L));
-        when(kbDocumentRepository.selectList(any())).thenReturn(List.of(readableDocument));
+        when(kbDocumentMapper.selectList(any())).thenReturn(List.of(readableDocument));
         when(embeddingService.embedQuery("文档内容")).thenReturn(new float[]{0.1f, 0.2f});
         mockEsSearchResponses(
                 buildSearchResponse(List.of()),
@@ -232,7 +232,7 @@ class VectorSearchServiceImplTest {
         KbDocument readableDocument = buildDocument(1L, 2002L, "PRIVATE");
 
         when(documentAclService.listReadableDocumentIds(1001L, 1L)).thenReturn(Set.of(1L));
-        when(kbDocumentRepository.selectList(any())).thenReturn(List.of(readableDocument));
+        when(kbDocumentMapper.selectList(any())).thenReturn(List.of(readableDocument));
         when(embeddingService.embedQuery("ACL 改造")).thenReturn(new float[]{0.1f, 0.2f});
         mockEsSearchResponses(
                 buildSearchResponse(List.of()),
@@ -252,7 +252,7 @@ class VectorSearchServiceImplTest {
         KbDocument readableDocument = buildDocument(1L, 2002L, "PRIVATE");
 
         when(documentAclService.listReadableDocumentIds(1001L, 1L)).thenReturn(Set.of(1L));
-        when(kbDocumentRepository.selectList(any())).thenReturn(List.of(readableDocument));
+        when(kbDocumentMapper.selectList(any())).thenReturn(List.of(readableDocument));
         when(embeddingService.embedQuery("ACL 改造")).thenReturn(new float[]{0.1f, 0.2f});
         mockEsSearchResponses(
                 buildSearchResponse(List.of()),

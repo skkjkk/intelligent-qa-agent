@@ -1,14 +1,15 @@
 package com.jujiu.agent.service.kb.impl;
 
-import com.jujiu.agent.common.exception.BusinessException;
-import com.jujiu.agent.model.dto.request.GrantDocumentAclRequest;
-import com.jujiu.agent.model.dto.response.KbDocumentAclResponse;
-import com.jujiu.agent.model.entity.KbDocument;
-import com.jujiu.agent.model.entity.KbDocumentAcl;
-import com.jujiu.agent.repository.KbDocumentAclRepository;
-import com.jujiu.agent.repository.KbDocumentRepository;
-import com.jujiu.agent.service.kb.DocumentAclAuditService;
-import com.jujiu.agent.service.kb.DocumentAclService;
+import com.jujiu.agent.module.kb.application.service.impl.DocumentAclManageServiceImpl;
+import com.jujiu.agent.shared.exception.BusinessException;
+import com.jujiu.agent.module.kb.api.request.GrantDocumentAclRequest;
+import com.jujiu.agent.module.kb.api.response.KbDocumentAclResponse;
+import com.jujiu.agent.module.kb.domain.entity.KbDocument;
+import com.jujiu.agent.module.kb.domain.entity.KbDocumentAcl;
+import com.jujiu.agent.module.kb.infrastructure.mapper.KbDocumentAclMapper;
+import com.jujiu.agent.module.kb.infrastructure.mapper.KbDocumentMapper;
+import com.jujiu.agent.module.kb.application.service.DocumentAclAuditService;
+import com.jujiu.agent.module.kb.application.service.DocumentAclService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -22,22 +23,22 @@ import static org.mockito.Mockito.*;
 
 class DocumentAclManageServiceImplTest {
 
-    private KbDocumentRepository kbDocumentRepository;
-    private KbDocumentAclRepository kbDocumentAclRepository;
+    private KbDocumentMapper kbDocumentMapper;
+    private KbDocumentAclMapper kbDocumentAclMapper;
     private DocumentAclService documentAclService;
     private DocumentAclAuditService documentAclAuditService;
     private DocumentAclManageServiceImpl documentAclManageService;
 
     @BeforeEach
     void setUp() {
-        kbDocumentRepository = mock(KbDocumentRepository.class);
-        kbDocumentAclRepository = mock(KbDocumentAclRepository.class);
+        kbDocumentMapper = mock(KbDocumentMapper.class);
+        kbDocumentAclMapper = mock(KbDocumentAclMapper.class);
         documentAclService = mock(DocumentAclService.class);
         documentAclAuditService = mock(DocumentAclAuditService.class);
 
         documentAclManageService = new DocumentAclManageServiceImpl(
-                kbDocumentRepository,
-                kbDocumentAclRepository,
+                kbDocumentMapper,
+                kbDocumentAclMapper,
                 documentAclService,
                 documentAclAuditService
         );
@@ -56,9 +57,9 @@ class DocumentAclManageServiceImplTest {
                 .createdAt(LocalDateTime.now())
                 .build();
 
-        when(kbDocumentRepository.selectById(1L)).thenReturn(document);
+        when(kbDocumentMapper.selectById(1L)).thenReturn(document);
         when(documentAclService.canShare(1001L, document)).thenReturn(true);
-        when(kbDocumentAclRepository.selectList(any())).thenReturn(List.of(acl));
+        when(kbDocumentAclMapper.selectList(any())).thenReturn(List.of(acl));
 
         List<KbDocumentAclResponse> result = documentAclManageService.listDocumentAcl(1001L, 1L);
 
@@ -77,7 +78,7 @@ class DocumentAclManageServiceImplTest {
     void listDocumentAcl_shouldThrow_whenUserCannotShare() {
         KbDocument document = buildDocument(1L, 2001L);
 
-        when(kbDocumentRepository.selectById(1L)).thenReturn(document);
+        when(kbDocumentMapper.selectById(1L)).thenReturn(document);
         when(documentAclService.canShare(1001L, document)).thenReturn(false);
 
         BusinessException exception = assertThrows(
@@ -89,7 +90,7 @@ class DocumentAclManageServiceImplTest {
 
         verify(documentAclAuditService, times(1))
                 .logAccessDenied(1L, 1001L, "NO_SHARE_PERMISSION");
-        verifyNoInteractions(kbDocumentAclRepository);
+        verifyNoInteractions(kbDocumentAclMapper);
     }
 
     @Test
@@ -98,13 +99,13 @@ class DocumentAclManageServiceImplTest {
         KbDocument document = buildDocument(1L, 2001L);
         GrantDocumentAclRequest request = new GrantDocumentAclRequest("USER", "3001", "READ");
 
-        when(kbDocumentRepository.selectById(1L)).thenReturn(document);
+        when(kbDocumentMapper.selectById(1L)).thenReturn(document);
         when(documentAclService.canShare(1001L, document)).thenReturn(true);
-        when(kbDocumentAclRepository.selectOne(any())).thenReturn(null);
+        when(kbDocumentAclMapper.selectOne(any())).thenReturn(null);
 
         documentAclManageService.grantDocumentAcl(1001L, 1L, request);
 
-        verify(kbDocumentAclRepository, times(1)).insert(any());
+        verify(kbDocumentAclMapper, times(1)).insert(any());
         verify(documentAclAuditService, times(1))
                 .logAclGrant(1L, 1001L, "USER", "3001", "READ");
     }
@@ -115,13 +116,13 @@ class DocumentAclManageServiceImplTest {
         KbDocument document = buildDocument(1L, 2001L);
         GrantDocumentAclRequest request = new GrantDocumentAclRequest("GROUP", "10", "READ");
 
-        when(kbDocumentRepository.selectById(1L)).thenReturn(document);
+        when(kbDocumentMapper.selectById(1L)).thenReturn(document);
         when(documentAclService.canShare(1001L, document)).thenReturn(true);
-        when(kbDocumentAclRepository.selectOne(any())).thenReturn(null);
+        when(kbDocumentAclMapper.selectOne(any())).thenReturn(null);
 
         documentAclManageService.grantDocumentAcl(1001L, 1L, request);
 
-        verify(kbDocumentAclRepository, times(1)).insert(any());
+        verify(kbDocumentAclMapper, times(1)).insert(any());
         verify(documentAclAuditService, times(1))
                 .logAclGrant(1L, 1001L, "GROUP", "10", "READ");
     }
@@ -132,13 +133,13 @@ class DocumentAclManageServiceImplTest {
         KbDocument document = buildDocument(1L, 2001L);
         GrantDocumentAclRequest request = new GrantDocumentAclRequest("USER", "3001", "SHARE");
 
-        when(kbDocumentRepository.selectById(1L)).thenReturn(document);
+        when(kbDocumentMapper.selectById(1L)).thenReturn(document);
         when(documentAclService.canShare(1001L, document)).thenReturn(true);
-        when(kbDocumentAclRepository.selectOne(any())).thenReturn(null);
+        when(kbDocumentAclMapper.selectOne(any())).thenReturn(null);
 
         documentAclManageService.grantDocumentAcl(1001L, 1L, request);
 
-        verify(kbDocumentAclRepository, times(1)).insert(any());
+        verify(kbDocumentAclMapper, times(1)).insert(any());
         verify(documentAclAuditService, times(1))
                 .logAclGrant(1L, 1001L, "USER", "3001", "SHARE");
     }
@@ -156,14 +157,14 @@ class DocumentAclManageServiceImplTest {
                 .permission("READ")
                 .build();
 
-        when(kbDocumentRepository.selectById(1L)).thenReturn(document);
+        when(kbDocumentMapper.selectById(1L)).thenReturn(document);
         when(documentAclService.canShare(1001L, document)).thenReturn(true);
-        when(kbDocumentAclRepository.selectOne(any())).thenReturn(existing);
+        when(kbDocumentAclMapper.selectOne(any())).thenReturn(existing);
 
         documentAclManageService.grantDocumentAcl(1001L, 1L, request);
 
-        verify(kbDocumentAclRepository, times(1)).selectOne(any());
-        verify(kbDocumentAclRepository, never()).insert(any());
+        verify(kbDocumentAclMapper, times(1)).selectOne(any());
+        verify(kbDocumentAclMapper, never()).insert(any());
         verify(documentAclAuditService, never())
                 .logAclGrant(anyLong(), anyLong(), anyString(), anyString(), anyString());
     }
@@ -174,13 +175,13 @@ class DocumentAclManageServiceImplTest {
         KbDocument document = buildDocument(1L, 2001L);
         GrantDocumentAclRequest request = new GrantDocumentAclRequest("USER", "2001", "rebuildFailedIndexes 是做什么的");
 
-        when(kbDocumentRepository.selectById(1L)).thenReturn(document);
+        when(kbDocumentMapper.selectById(1L)).thenReturn(document);
         when(documentAclService.canShare(1001L, document)).thenReturn(true);
 
         documentAclManageService.grantDocumentAcl(1001L, 1L, request);
 
-        verify(kbDocumentAclRepository, never()).selectOne(any());
-        verify(kbDocumentAclRepository, never()).insert(any());
+        verify(kbDocumentAclMapper, never()).selectOne(any());
+        verify(kbDocumentAclMapper, never()).insert(any());
         verify(documentAclAuditService, never())
                 .logAclGrant(anyLong(), anyLong(), anyString(), anyString(), anyString());
     }
@@ -191,7 +192,7 @@ class DocumentAclManageServiceImplTest {
         KbDocument document = buildDocument(1L, 2001L);
         GrantDocumentAclRequest request = new GrantDocumentAclRequest("ROLE", "3001", "READ");
 
-        when(kbDocumentRepository.selectById(1L)).thenReturn(document);
+        when(kbDocumentMapper.selectById(1L)).thenReturn(document);
         when(documentAclService.canShare(1001L, document)).thenReturn(true);
 
         BusinessException exception = assertThrows(
@@ -200,7 +201,7 @@ class DocumentAclManageServiceImplTest {
         );
 
         assertTrue(exception.getMessage().contains("当前仅支持 USER 或 GROUP 主体类型"));
-        verify(kbDocumentAclRepository, never()).insert(any());
+        verify(kbDocumentAclMapper, never()).insert(any());
     }
 
     @Test
@@ -209,7 +210,7 @@ class DocumentAclManageServiceImplTest {
         KbDocument document = buildDocument(1L, 2001L);
         GrantDocumentAclRequest request = new GrantDocumentAclRequest("USER", "3001", "DELETE");
 
-        when(kbDocumentRepository.selectById(1L)).thenReturn(document);
+        when(kbDocumentMapper.selectById(1L)).thenReturn(document);
         when(documentAclService.canShare(1001L, document)).thenReturn(true);
 
         BusinessException exception = assertThrows(
@@ -218,7 +219,7 @@ class DocumentAclManageServiceImplTest {
         );
 
         assertTrue(exception.getMessage().contains("当前仅支持 READ、rebuildFailedIndexes 是做什么的 或 SHARE 权限"));
-        verify(kbDocumentAclRepository, never()).insert(any());
+        verify(kbDocumentAclMapper, never()).insert(any());
     }
 
     @Test
@@ -227,7 +228,7 @@ class DocumentAclManageServiceImplTest {
         KbDocument document = buildDocument(1L, 2001L);
         GrantDocumentAclRequest request = new GrantDocumentAclRequest("USER", "3001", "READ");
 
-        when(kbDocumentRepository.selectById(1L)).thenReturn(document);
+        when(kbDocumentMapper.selectById(1L)).thenReturn(document);
         when(documentAclService.canShare(1001L, document)).thenReturn(false);
 
         BusinessException exception = assertThrows(
@@ -238,7 +239,7 @@ class DocumentAclManageServiceImplTest {
         assertTrue(exception.getMessage().contains("文档不存在"));
         verify(documentAclAuditService, times(1))
                 .logAccessDenied(1L, 1001L, "NO_SHARE_PERMISSION");
-        verify(kbDocumentAclRepository, never()).insert(any());
+        verify(kbDocumentAclMapper, never()).insert(any());
     }
 
     @Test
@@ -246,13 +247,13 @@ class DocumentAclManageServiceImplTest {
     void revokeDocumentAcl_shouldDeleteAcl_whenUserCanShare() {
         KbDocument document = buildDocument(1L, 2001L);
 
-        when(kbDocumentRepository.selectById(1L)).thenReturn(document);
+        when(kbDocumentMapper.selectById(1L)).thenReturn(document);
         when(documentAclService.canShare(1001L, document)).thenReturn(true);
-        when(kbDocumentAclRepository.delete(any())).thenReturn(1);
+        when(kbDocumentAclMapper.delete(any())).thenReturn(1);
 
         documentAclManageService.revokeDocumentAcl(1001L, 1L, "USER", "3001", "READ");
 
-        verify(kbDocumentAclRepository, times(1)).delete(any());
+        verify(kbDocumentAclMapper, times(1)).delete(any());
         verify(documentAclAuditService, times(1))
                 .logAclRevoke(1L, 1001L, "USER", "3001", "READ");
     }
@@ -262,13 +263,13 @@ class DocumentAclManageServiceImplTest {
     void revokeDocumentAcl_shouldNotLogAudit_whenNothingDeleted() {
         KbDocument document = buildDocument(1L, 2001L);
 
-        when(kbDocumentRepository.selectById(1L)).thenReturn(document);
+        when(kbDocumentMapper.selectById(1L)).thenReturn(document);
         when(documentAclService.canShare(1001L, document)).thenReturn(true);
-        when(kbDocumentAclRepository.delete(any())).thenReturn(0);
+        when(kbDocumentAclMapper.delete(any())).thenReturn(0);
 
         documentAclManageService.revokeDocumentAcl(1001L, 1L, "USER", "3001", "READ");
 
-        verify(kbDocumentAclRepository, times(1)).delete(any());
+        verify(kbDocumentAclMapper, times(1)).delete(any());
         verify(documentAclAuditService, never())
                 .logAclRevoke(anyLong(), anyLong(), anyString(), anyString(), anyString());
     }
@@ -278,7 +279,7 @@ class DocumentAclManageServiceImplTest {
     void revokeDocumentAcl_shouldThrow_whenUserCannotShare() {
         KbDocument document = buildDocument(1L, 2001L);
 
-        when(kbDocumentRepository.selectById(1L)).thenReturn(document);
+        when(kbDocumentMapper.selectById(1L)).thenReturn(document);
         when(documentAclService.canShare(1001L, document)).thenReturn(false);
 
         BusinessException exception = assertThrows(
@@ -289,13 +290,13 @@ class DocumentAclManageServiceImplTest {
         assertTrue(exception.getMessage().contains("文档不存在"));
         verify(documentAclAuditService, times(1))
                 .logAccessDenied(1L, 1001L, "NO_SHARE_PERMISSION");
-        verify(kbDocumentAclRepository, never()).delete(any());
+        verify(kbDocumentAclMapper, never()).delete(any());
     }
 
     @Test
     @DisplayName("文档不存在时回收授权应抛异常")
     void revokeDocumentAcl_shouldThrow_whenDocumentNotFound() {
-        when(kbDocumentRepository.selectById(1L)).thenReturn(null);
+        when(kbDocumentMapper.selectById(1L)).thenReturn(null);
 
         BusinessException exception = assertThrows(
                 BusinessException.class,
@@ -304,7 +305,7 @@ class DocumentAclManageServiceImplTest {
 
         assertTrue(exception.getMessage().contains("文档不存在"));
         verifyNoInteractions(documentAclService);
-        verify(kbDocumentAclRepository, never()).delete(any());
+        verify(kbDocumentAclMapper, never()).delete(any());
     }
 
     private KbDocument buildDocument(Long id, Long ownerUserId) {

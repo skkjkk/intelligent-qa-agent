@@ -1,14 +1,15 @@
 package com.jujiu.agent.service.kb.impl;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.jujiu.agent.common.exception.BusinessException;
-import com.jujiu.agent.model.dto.request.QueryFeedbackRequest;
-import com.jujiu.agent.model.dto.response.KbQueryHistoryResponse;
-import com.jujiu.agent.model.entity.KbQueryFeedback;
-import com.jujiu.agent.model.entity.KbQueryLog;
-import com.jujiu.agent.repository.KbQueryFeedbackRepository;
-import com.jujiu.agent.repository.KbQueryLogRepository;
-import com.jujiu.agent.repository.KbRetrievalTraceRepository;
+import com.jujiu.agent.module.kb.application.service.impl.QueryLogServiceImpl;
+import com.jujiu.agent.shared.exception.BusinessException;
+import com.jujiu.agent.module.kb.api.request.QueryFeedbackRequest;
+import com.jujiu.agent.module.kb.api.response.KbQueryHistoryResponse;
+import com.jujiu.agent.module.kb.domain.entity.KbQueryFeedback;
+import com.jujiu.agent.module.kb.domain.entity.KbQueryLog;
+import com.jujiu.agent.module.kb.infrastructure.mapper.KbQueryFeedbackMapper;
+import com.jujiu.agent.module.kb.infrastructure.mapper.KbQueryLogMapper;
+import com.jujiu.agent.module.kb.infrastructure.mapper.KbRetrievalTraceMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -31,22 +32,22 @@ import static org.mockito.Mockito.*;
  */
 
 public class QueryLogServiceImplTest {
-    private KbQueryLogRepository kbQueryLogRepository;
-    private KbRetrievalTraceRepository kbRetrievalTraceRepository;
-    private KbQueryFeedbackRepository kbQueryFeedbackRepository;
+    private KbQueryLogMapper kbQueryLogMapper;
+    private KbRetrievalTraceMapper kbRetrievalTraceMapper;
+    private KbQueryFeedbackMapper kbQueryFeedbackMapper;
     private QueryLogServiceImpl queryLogService;
 
     @BeforeEach
     void setUp() {
-        kbQueryLogRepository = mock(KbQueryLogRepository.class);
-        kbRetrievalTraceRepository = mock(KbRetrievalTraceRepository.class);
-        kbQueryFeedbackRepository = mock(KbQueryFeedbackRepository.class);
+        kbQueryLogMapper = mock(KbQueryLogMapper.class);
+        kbRetrievalTraceMapper = mock(KbRetrievalTraceMapper.class);
+        kbQueryFeedbackMapper = mock(KbQueryFeedbackMapper.class);
 
         queryLogService = new QueryLogServiceImpl(
-                kbQueryLogRepository,
-                kbRetrievalTraceRepository,
+                kbQueryLogMapper,
+                kbRetrievalTraceMapper,
                 new ObjectMapper(),
-                kbQueryFeedbackRepository
+                kbQueryFeedbackMapper
                 
         );
     }
@@ -71,12 +72,12 @@ public class QueryLogServiceImplTest {
                 .createdAt(LocalDateTime.now())
                 .build();
 
-        when(kbQueryLogRepository.selectById(queryLogId)).thenReturn(queryLog);
+        when(kbQueryLogMapper.selectById(queryLogId)).thenReturn(queryLog);
 
         queryLogService.saveFeedback(userId, queryLogId, request);
 
         ArgumentCaptor<KbQueryFeedback> feedbackCaptor = ArgumentCaptor.forClass(KbQueryFeedback.class);
-        verify(kbQueryFeedbackRepository, times(1)).insert(feedbackCaptor.capture());
+        verify(kbQueryFeedbackMapper, times(1)).insert(feedbackCaptor.capture());
 
         KbQueryFeedback savedFeedback = feedbackCaptor.getValue();
         assertEquals(queryLogId, savedFeedback.getQueryLogId());
@@ -96,13 +97,13 @@ public class QueryLogServiceImplTest {
         QueryFeedbackRequest request = new QueryFeedbackRequest();
         request.setHelpful(true);
 
-        when(kbQueryLogRepository.selectById(queryLogId)).thenReturn(null);
+        when(kbQueryLogMapper.selectById(queryLogId)).thenReturn(null);
 
         BusinessException exception = assertThrows(BusinessException.class,
                 () -> queryLogService.saveFeedback(userId, queryLogId, request));
 
         assertEquals("查询记录不存在", exception.getMessage());
-        verify(kbQueryFeedbackRepository, never()).insert(any());
+        verify(kbQueryFeedbackMapper, never()).insert(any());
     }
 
     @Test
@@ -123,13 +124,13 @@ public class QueryLogServiceImplTest {
                 .createdAt(LocalDateTime.now())
                 .build();
 
-        when(kbQueryLogRepository.selectById(queryLogId)).thenReturn(queryLog);
+        when(kbQueryLogMapper.selectById(queryLogId)).thenReturn(queryLog);
 
         BusinessException exception = assertThrows(BusinessException.class,
                 () -> queryLogService.saveFeedback(userId, queryLogId, request));
 
         assertEquals("无权反馈该查询记录", exception.getMessage());
-        verify(kbQueryFeedbackRepository, never()).insert(any());
+        verify(kbQueryFeedbackMapper, never()).insert(any());
     }
 
     @Test
@@ -154,7 +155,7 @@ public class QueryLogServiceImplTest {
                 .createdAt(now)
                 .build();
 
-        when(kbQueryLogRepository.selectList(any())).thenReturn(List.of(log1));
+        when(kbQueryLogMapper.selectList(any())).thenReturn(List.of(log1));
 
         List<KbQueryHistoryResponse> result = queryLogService.listQueryHistory(userId, kbId);
 

@@ -1,9 +1,10 @@
 package com.jujiu.agent.service.kb.impl;
 
-import com.jujiu.agent.common.exception.BusinessException;
-import com.jujiu.agent.model.dto.response.KbDocumentStatsResponse;
-import com.jujiu.agent.model.entity.KbDocument;
-import com.jujiu.agent.repository.KbDocumentRepository;
+import com.jujiu.agent.module.kb.application.service.impl.KnowledgeBaseDocumentStatsServiceImpl;
+import com.jujiu.agent.shared.exception.BusinessException;
+import com.jujiu.agent.module.kb.api.response.KbDocumentStatsResponse;
+import com.jujiu.agent.module.kb.domain.entity.KbDocument;
+import com.jujiu.agent.module.kb.infrastructure.mapper.KbDocumentMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -18,13 +19,13 @@ import static org.mockito.Mockito.*;
 
 class KnowledgeBaseDocumentStatsServiceImplTest {
 
-    private KbDocumentRepository kbDocumentRepository;
+    private KbDocumentMapper kbDocumentMapper;
     private KnowledgeBaseDocumentStatsServiceImpl service;
 
     @BeforeEach
     void setUp() {
-        kbDocumentRepository = mock(KbDocumentRepository.class);
-        service = new KnowledgeBaseDocumentStatsServiceImpl(kbDocumentRepository);
+        kbDocumentMapper = mock(KbDocumentMapper.class);
+        service = new KnowledgeBaseDocumentStatsServiceImpl(kbDocumentMapper);
     }
 
     @Test
@@ -33,7 +34,7 @@ class KnowledgeBaseDocumentStatsServiceImplTest {
         Long userId = 1001L;
         Long kbId = 1L;
 
-        when(kbDocumentRepository.selectCount(any())).thenReturn(
+        when(kbDocumentMapper.selectCount(any())).thenReturn(
                 6L, // total
                 4L, // success
                 1L, // processing
@@ -45,23 +46,23 @@ class KnowledgeBaseDocumentStatsServiceImplTest {
                 1L  // html
         );
 
-        when(kbDocumentRepository.selectList(any())).thenReturn(List.of(
+        when(kbDocumentMapper.selectList(any())).thenReturn(List.of(
                 KbDocument.builder().chunkCount(10).build(),
                 KbDocument.builder().chunkCount(20).build(),
                 KbDocument.builder().chunkCount(30).build()
         ));
 
-        when(kbDocumentRepository.aggregateByFileType(userId, kbId)).thenReturn(List.of(
+        when(kbDocumentMapper.aggregateByFileType(userId, kbId)).thenReturn(List.of(
                 Map.of("dimName", "pdf", "dimCount", 2L),
                 Map.of("dimName", "docx", "dimCount", 1L)
         ));
 
-        when(kbDocumentRepository.aggregateByStatus(userId, kbId)).thenReturn(List.of(
+        when(kbDocumentMapper.aggregateByStatus(userId, kbId)).thenReturn(List.of(
                 Map.of("dimName", "SUCCESS", "dimCount", 4L),
                 Map.of("dimName", "FAILED", "dimCount", 1L)
         ));
 
-        when(kbDocumentRepository.aggregateCreatedTrend(eq(userId), eq(kbId), any())).thenReturn(List.of(
+        when(kbDocumentMapper.aggregateCreatedTrend(eq(userId), eq(kbId), any())).thenReturn(List.of(
                 Map.of("dayVal", "2026-04-19", "dayCount", 1L),
                 Map.of("dayVal", "2026-04-20", "dayCount", 2L)
         ));
@@ -93,11 +94,11 @@ class KnowledgeBaseDocumentStatsServiceImplTest {
         assertEquals(2, result.getTrend7Days().size());
         assertEquals(2, result.getTrend30Days().size());
 
-        verify(kbDocumentRepository, times(9)).selectCount(any());
-        verify(kbDocumentRepository, times(1)).selectList(any());
-        verify(kbDocumentRepository, times(1)).aggregateByFileType(userId, kbId);
-        verify(kbDocumentRepository, times(1)).aggregateByStatus(userId, kbId);
-        verify(kbDocumentRepository, times(2)).aggregateCreatedTrend(eq(userId), eq(kbId), any());
+        verify(kbDocumentMapper, times(9)).selectCount(any());
+        verify(kbDocumentMapper, times(1)).selectList(any());
+        verify(kbDocumentMapper, times(1)).aggregateByFileType(userId, kbId);
+        verify(kbDocumentMapper, times(1)).aggregateByStatus(userId, kbId);
+        verify(kbDocumentMapper, times(2)).aggregateCreatedTrend(eq(userId), eq(kbId), any());
     }
 
     @Test
@@ -107,6 +108,6 @@ class KnowledgeBaseDocumentStatsServiceImplTest {
                 () -> service.getDocumentStats(0L, 1L, 30, ZoneId.of("Asia/Shanghai"), 10));
 
         assertTrue(ex.getMessage().contains("userId 不能为空"));
-        verifyNoInteractions(kbDocumentRepository);
+        verifyNoInteractions(kbDocumentMapper);
     }
 }

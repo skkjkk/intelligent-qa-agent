@@ -2,11 +2,12 @@ package com.jujiu.agent.tool.impl;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.jujiu.agent.model.dto.request.QueryKnowledgeBaseRequest;
-import com.jujiu.agent.model.dto.response.CitationResponse;
-import com.jujiu.agent.model.dto.response.KnowledgeQueryResponse;
-import com.jujiu.agent.service.kb.RagService;
-import com.jujiu.agent.tool.ToolExecutionContext;
+import com.jujiu.agent.module.kb.api.request.QueryKnowledgeBaseRequest;
+import com.jujiu.agent.module.kb.api.response.CitationResponse;
+import com.jujiu.agent.module.kb.api.response.KnowledgeQueryResponse;
+import com.jujiu.agent.module.kb.application.service.RagService;
+import com.jujiu.agent.module.tool.runtime.ToolExecutionContext;
+import com.jujiu.agent.module.tool.runtime.impl.KnowledgeBaseTool;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;

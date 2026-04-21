@@ -1,19 +1,20 @@
 package com.jujiu.agent.service.impl;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.jujiu.agent.client.DeepSeekClient;
-import com.jujiu.agent.client.DeepSeekResult;
-import com.jujiu.agent.config.DeepSeekProperties;
-import com.jujiu.agent.model.dto.request.SendMessageRequest;
-import com.jujiu.agent.model.dto.response.ChatResponse;
-import com.jujiu.agent.model.entity.Message;
-import com.jujiu.agent.model.entity.Session;
-import com.jujiu.agent.repository.MessageRepository;
-import com.jujiu.agent.repository.SessionRepository;
-import com.jujiu.agent.service.ChatPersistenceService;
-import com.jujiu.agent.service.ChatRateLimitService;
-import com.jujiu.agent.service.FunctionCallingService;
-import com.jujiu.agent.service.kb.RagService;
+import com.jujiu.agent.module.chat.infrastructure.deepseek.DeepSeekClient;
+import com.jujiu.agent.module.chat.infrastructure.deepseek.DeepSeekResult;
+import com.jujiu.agent.module.chat.infrastructure.config.DeepSeekProperties;
+import com.jujiu.agent.module.chat.api.request.SendMessageRequest;
+import com.jujiu.agent.module.chat.api.response.ChatResponse;
+import com.jujiu.agent.module.chat.domain.entity.Message;
+import com.jujiu.agent.module.chat.domain.entity.Session;
+import com.jujiu.agent.module.chat.infrastructure.mapper.MessageMapper;
+import com.jujiu.agent.module.chat.infrastructure.mapper.SessionMapper;
+import com.jujiu.agent.module.chat.application.service.ChatPersistenceService;
+import com.jujiu.agent.module.chat.application.service.ChatRateLimitService;
+import com.jujiu.agent.module.chat.application.service.FunctionCallingService;
+import com.jujiu.agent.module.chat.application.service.impl.ChatServiceImpl;
+import com.jujiu.agent.module.kb.application.service.RagService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -28,8 +29,8 @@ import static org.mockito.Mockito.*;
 
 class ChatServiceImplTest {
 
-    private MessageRepository messageRepository;
-    private SessionRepository sessionRepository;
+    private MessageMapper messageMapper;
+    private SessionMapper sessionMapper;
     private DeepSeekClient deepSeekClient;
     private DeepSeekProperties deepSeekProperties;
     private FunctionCallingService functionCallingService;
@@ -42,8 +43,8 @@ class ChatServiceImplTest {
 
     @BeforeEach
     void setUp() {
-        messageRepository = mock(MessageRepository.class);
-        sessionRepository = mock(SessionRepository.class);
+        messageMapper = mock(MessageMapper.class);
+        sessionMapper = mock(SessionMapper.class);
         deepSeekClient = mock(DeepSeekClient.class);
         deepSeekProperties = new DeepSeekProperties();
         deepSeekProperties.setSystemPrompt("你是一个测试助手");
@@ -56,8 +57,8 @@ class ChatServiceImplTest {
         ragService = mock(RagService.class);
 
         chatService = new ChatServiceImpl(
-                messageRepository,
-                sessionRepository,
+                messageMapper,
+                sessionMapper,
                 deepSeekClient,
                 deepSeekProperties,
                 functionCallingService,
@@ -111,10 +112,10 @@ class ChatServiceImplTest {
         request.setKnowledgeBaseId(1L);
         request.setRetrievalTopK(5);
 
-        when(sessionRepository.selectOne(any())).thenReturn(session);
+        when(sessionMapper.selectOne(any())).thenReturn(session);
         when(chatPersistenceService.saveUserMessage("session_001", "帮我总结一下 ACL"))
                 .thenReturn(userMessage);
-        when(messageRepository.selectList(any())).thenReturn(List.of(userMessage));
+        when(messageMapper.selectList(any())).thenReturn(List.of(userMessage));
         when(ragService.buildKnowledgeContext(1001L, 1L, "帮我总结一下 ACL", 5))
                 .thenReturn("");
         when(functionCallingService.chatWithTools(eq(1001L), anyList()))
@@ -178,10 +179,10 @@ class ChatServiceImplTest {
         request.setKnowledgeBaseId(1L);
         request.setRetrievalTopK(5);
 
-        when(sessionRepository.selectOne(any())).thenReturn(session);
+        when(sessionMapper.selectOne(any())).thenReturn(session);
         when(chatPersistenceService.saveUserMessage("session_002", "ACL 怎么设计"))
                 .thenReturn(userMessage);
-        when(messageRepository.selectList(any())).thenReturn(List.of(userMessage));
+        when(messageMapper.selectList(any())).thenReturn(List.of(userMessage));
         when(ragService.buildKnowledgeContext(1001L, 1L, "ACL 怎么设计", 5))
                 .thenReturn("这是知识库上下文");
         when(functionCallingService.chatWithTools(eq(1001L), anyList()))
@@ -241,10 +242,10 @@ class ChatServiceImplTest {
         request.setMessage("普通聊天问题");
         request.setEnableKnowledgeBase(false);
 
-        when(sessionRepository.selectOne(any())).thenReturn(session);
+        when(sessionMapper.selectOne(any())).thenReturn(session);
         when(chatPersistenceService.saveUserMessage("session_003", "普通聊天问题"))
                 .thenReturn(userMessage);
-        when(messageRepository.selectList(any())).thenReturn(List.of(userMessage));
+        when(messageMapper.selectList(any())).thenReturn(List.of(userMessage));
         when(functionCallingService.chatWithTools(eq(1001L), anyList()))
                 .thenReturn(chatResult);
         when(chatPersistenceService.saveAssistantMessage("session_003", "普通聊天回复", 40))

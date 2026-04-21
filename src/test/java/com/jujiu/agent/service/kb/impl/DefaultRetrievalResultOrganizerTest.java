@@ -1,8 +1,9 @@
 package com.jujiu.agent.service.kb.impl;
 
-import com.jujiu.agent.common.result.ChunkSearchResult;
-import com.jujiu.agent.model.dto.response.CitationResponse;
-import com.jujiu.agent.service.kb.model.OrganizedRetrievalResult;
+import com.jujiu.agent.module.kb.application.service.impl.DefaultRetrievalResultOrganizer;
+import com.jujiu.agent.module.kb.application.model.ChunkSearchResult;
+import com.jujiu.agent.module.kb.api.response.CitationResponse;
+import com.jujiu.agent.module.kb.application.model.OrganizedRetrievalResult;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 

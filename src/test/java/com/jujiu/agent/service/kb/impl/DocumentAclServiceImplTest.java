@@ -1,12 +1,13 @@
 package com.jujiu.agent.service.kb.impl;
 
-import com.jujiu.agent.config.KnowledgeBaseProperties;
-import com.jujiu.agent.model.entity.KbDocument;
-import com.jujiu.agent.model.entity.KbDocumentGroup;
-import com.jujiu.agent.repository.KbDocumentAclRepository;
-import com.jujiu.agent.repository.KbDocumentGroupRepository;
-import com.jujiu.agent.repository.KbDocumentRepository;
-import com.jujiu.agent.service.kb.GroupMembershipService;
+import com.jujiu.agent.module.kb.infrastructure.config.KnowledgeBaseProperties;
+import com.jujiu.agent.module.kb.application.service.impl.DocumentAclServiceImpl;
+import com.jujiu.agent.module.kb.domain.entity.KbDocument;
+import com.jujiu.agent.module.kb.domain.entity.KbDocumentGroup;
+import com.jujiu.agent.module.kb.infrastructure.mapper.KbDocumentAclMapper;
+import com.jujiu.agent.module.kb.infrastructure.mapper.KbDocumentGroupMapper;
+import com.jujiu.agent.module.kb.infrastructure.mapper.KbDocumentMapper;
+import com.jujiu.agent.module.kb.application.service.GroupMembershipService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -19,28 +20,28 @@ import static org.mockito.Mockito.*;
 
 class DocumentAclServiceImplTest {
 
-    private KbDocumentRepository kbDocumentRepository;
-    private KbDocumentAclRepository kbDocumentAclRepository;
-    private KbDocumentGroupRepository kbDocumentGroupRepository;
+    private KbDocumentMapper kbDocumentMapper;
+    private KbDocumentAclMapper kbDocumentAclMapper;
+    private KbDocumentGroupMapper kbDocumentGroupMapper;
     private GroupMembershipService groupMembershipService;
     private KnowledgeBaseProperties knowledgeBaseProperties;
     private DocumentAclServiceImpl documentAclService;
 
     @BeforeEach
     void setUp() {
-        kbDocumentRepository = mock(KbDocumentRepository.class);
-        kbDocumentAclRepository = mock(KbDocumentAclRepository.class);
-        kbDocumentGroupRepository = mock(KbDocumentGroupRepository.class);
+        kbDocumentMapper = mock(KbDocumentMapper.class);
+        kbDocumentAclMapper = mock(KbDocumentAclMapper.class);
+        kbDocumentGroupMapper = mock(KbDocumentGroupMapper.class);
         groupMembershipService = mock(GroupMembershipService.class);
         knowledgeBaseProperties = new KnowledgeBaseProperties();
         knowledgeBaseProperties.getSecurity().setEnableAcl(true);
 
         documentAclService = new DocumentAclServiceImpl(
-                kbDocumentRepository,
-                kbDocumentAclRepository,
+                kbDocumentMapper,
+                kbDocumentAclMapper,
                 knowledgeBaseProperties,
                 groupMembershipService,
-                kbDocumentGroupRepository
+                kbDocumentGroupMapper
         );
     }
 
@@ -52,7 +53,7 @@ class DocumentAclServiceImplTest {
         boolean result = documentAclService.canRead(1001L, document);
 
         assertTrue(result);
-        verifyNoInteractions(kbDocumentAclRepository);
+        verifyNoInteractions(kbDocumentAclMapper);
     }
 
     @Test
@@ -63,7 +64,7 @@ class DocumentAclServiceImplTest {
         boolean result = documentAclService.canManage(1001L, document);
 
         assertTrue(result);
-        verifyNoInteractions(kbDocumentAclRepository);
+        verifyNoInteractions(kbDocumentAclMapper);
     }
 
     @Test
@@ -74,7 +75,7 @@ class DocumentAclServiceImplTest {
         boolean result = documentAclService.canShare(1001L, document);
 
         assertTrue(result);
-        verifyNoInteractions(kbDocumentAclRepository);
+        verifyNoInteractions(kbDocumentAclMapper);
     }
 
     @Test
@@ -85,14 +86,14 @@ class DocumentAclServiceImplTest {
         boolean result = documentAclService.canRead(1001L, document);
 
         assertTrue(result);
-        verifyNoInteractions(kbDocumentAclRepository);
+        verifyNoInteractions(kbDocumentAclMapper);
     }
 
     @Test
     @DisplayName("PUBLIC 文档不应自动赋予非 owner 管理权限")
     void canManage_shouldReturnFalse_whenDocumentIsPublicForNonOwner() {
         KbDocument document = buildDocument(1L, 2002L, "PUBLIC", 1, 0);
-        when(kbDocumentAclRepository.selectCount(any())).thenReturn(0L);
+        when(kbDocumentAclMapper.selectCount(any())).thenReturn(0L);
 
         boolean result = documentAclService.canManage(1001L, document);
 
@@ -103,7 +104,7 @@ class DocumentAclServiceImplTest {
     @DisplayName("PUBLIC 文档不应自动赋予非 owner 分享权限")
     void canShare_shouldReturnFalse_whenDocumentIsPublicForNonOwner() {
         KbDocument document = buildDocument(1L, 2002L, "PUBLIC", 1, 0);
-        when(kbDocumentAclRepository.selectCount(any())).thenReturn(0L);
+        when(kbDocumentAclMapper.selectCount(any())).thenReturn(0L);
 
         boolean result = documentAclService.canShare(1001L, document);
 
@@ -114,7 +115,7 @@ class DocumentAclServiceImplTest {
     @DisplayName("显式 READ 授权时应允许读取")
     void canRead_shouldReturnTrue_whenUserHasReadGrant() {
         KbDocument document = buildDocument(1L, 2002L, "PRIVATE", 1, 0);
-        when(kbDocumentAclRepository.selectCount(any())).thenReturn(1L);
+        when(kbDocumentAclMapper.selectCount(any())).thenReturn(1L);
 
         boolean result = documentAclService.canRead(1001L, document);
 
@@ -125,7 +126,7 @@ class DocumentAclServiceImplTest {
     @DisplayName("仅有 READ 权限时不应允许管理")
     void canManage_shouldReturnFalse_whenUserOnlyHasReadGrant() {
         KbDocument document = buildDocument(1L, 2002L, "PRIVATE", 1, 0);
-        when(kbDocumentAclRepository.selectCount(any())).thenReturn(0L);
+        when(kbDocumentAclMapper.selectCount(any())).thenReturn(0L);
 
         boolean result = documentAclService.canManage(1001L, document);
 
@@ -136,7 +137,7 @@ class DocumentAclServiceImplTest {
     @DisplayName("仅有 READ 权限时不应允许分享")
     void canShare_shouldReturnFalse_whenUserOnlyHasReadGrant() {
         KbDocument document = buildDocument(1L, 2002L, "PRIVATE", 1, 0);
-        when(kbDocumentAclRepository.selectCount(any())).thenReturn(0L);
+        when(kbDocumentAclMapper.selectCount(any())).thenReturn(0L);
 
         boolean result = documentAclService.canShare(1001L, document);
 
@@ -147,7 +148,7 @@ class DocumentAclServiceImplTest {
     @DisplayName("显式 rebuildFailedIndexes 是做什么的 授权时应允许管理")
     void canManage_shouldReturnTrue_whenUserHasManageGrant() {
         KbDocument document = buildDocument(1L, 2002L, "PRIVATE", 1, 0);
-        when(kbDocumentAclRepository.selectCount(any())).thenReturn(1L);
+        when(kbDocumentAclMapper.selectCount(any())).thenReturn(1L);
 
         boolean result = documentAclService.canManage(1001L, document);
 
@@ -158,7 +159,7 @@ class DocumentAclServiceImplTest {
     @DisplayName("rebuildFailedIndexes 是做什么的 权限应隐含读取能力")
     void canRead_shouldReturnTrue_whenUserHasManageGrant() {
         KbDocument document = buildDocument(1L, 2002L, "PRIVATE", 1, 0);
-        when(kbDocumentAclRepository.selectCount(any())).thenReturn(1L);
+        when(kbDocumentAclMapper.selectCount(any())).thenReturn(1L);
 
         boolean result = documentAclService.canRead(1001L, document);
 
@@ -169,7 +170,7 @@ class DocumentAclServiceImplTest {
     @DisplayName("rebuildFailedIndexes 是做什么的 权限应隐含分享能力")
     void canShare_shouldReturnTrue_whenUserHasManageGrant() {
         KbDocument document = buildDocument(1L, 2002L, "PRIVATE", 1, 0);
-        when(kbDocumentAclRepository.selectCount(any())).thenReturn(1L);
+        when(kbDocumentAclMapper.selectCount(any())).thenReturn(1L);
 
         boolean result = documentAclService.canShare(1001L, document);
 
@@ -180,7 +181,7 @@ class DocumentAclServiceImplTest {
     @DisplayName("显式 SHARE 授权时应允许分享")
     void canShare_shouldReturnTrue_whenUserHasShareGrant() {
         KbDocument document = buildDocument(1L, 2002L, "PRIVATE", 1, 0);
-        when(kbDocumentAclRepository.selectCount(any())).thenReturn(1L);
+        when(kbDocumentAclMapper.selectCount(any())).thenReturn(1L);
 
         boolean result = documentAclService.canShare(1001L, document);
 
@@ -191,7 +192,7 @@ class DocumentAclServiceImplTest {
     @DisplayName("SHARE 权限应隐含读取能力")
     void canRead_shouldReturnTrue_whenUserHasShareGrant() {
         KbDocument document = buildDocument(1L, 2002L, "PRIVATE", 1, 0);
-        when(kbDocumentAclRepository.selectCount(any())).thenReturn(1L);
+        when(kbDocumentAclMapper.selectCount(any())).thenReturn(1L);
 
         boolean result = documentAclService.canRead(1001L, document);
 
@@ -202,7 +203,7 @@ class DocumentAclServiceImplTest {
     @DisplayName("仅有 SHARE 权限时不应允许管理")
     void canManage_shouldReturnFalse_whenUserOnlyHasShareGrant() {
         KbDocument document = buildDocument(1L, 2002L, "PRIVATE", 1, 0);
-        when(kbDocumentAclRepository.selectCount(any())).thenReturn(0L);
+        when(kbDocumentAclMapper.selectCount(any())).thenReturn(0L);
 
         boolean result = documentAclService.canManage(1001L, document);
 
@@ -214,7 +215,7 @@ class DocumentAclServiceImplTest {
     void canRead_shouldReturnTrue_whenUserGroupHasReadGrant() {
         KbDocument document = buildDocument(1L, 2002L, "PRIVATE", 1, 0);
 
-        when(kbDocumentAclRepository.selectCount(any()))
+        when(kbDocumentAclMapper.selectCount(any()))
                 .thenReturn(0L)
                 .thenReturn(1L);
         when(groupMembershipService.listGroupIdsByUserId(1001L)).thenReturn(Set.of(10L));
@@ -229,7 +230,7 @@ class DocumentAclServiceImplTest {
     void canManage_shouldReturnTrue_whenUserGroupHasManageGrant() {
         KbDocument document = buildDocument(1L, 2002L, "PRIVATE", 1, 0);
 
-        when(kbDocumentAclRepository.selectCount(any()))
+        when(kbDocumentAclMapper.selectCount(any()))
                 .thenReturn(0L)
                 .thenReturn(1L);
         when(groupMembershipService.listGroupIdsByUserId(1001L)).thenReturn(Set.of(10L));
@@ -244,7 +245,7 @@ class DocumentAclServiceImplTest {
     void canShare_shouldReturnTrue_whenUserGroupHasShareGrant() {
         KbDocument document = buildDocument(1L, 2002L, "PRIVATE", 1, 0);
 
-        when(kbDocumentAclRepository.selectCount(any()))
+        when(kbDocumentAclMapper.selectCount(any()))
                 .thenReturn(0L)
                 .thenReturn(1L);
         when(groupMembershipService.listGroupIdsByUserId(1001L)).thenReturn(Set.of(10L));
@@ -259,7 +260,7 @@ class DocumentAclServiceImplTest {
     void canRead_shouldReturnFalse_whenUserNotInGrantedGroup() {
         KbDocument document = buildDocument(1L, 2002L, "PRIVATE", 1, 0);
 
-        when(kbDocumentAclRepository.selectCount(any())).thenReturn(0L);
+        when(kbDocumentAclMapper.selectCount(any())).thenReturn(0L);
         when(groupMembershipService.listGroupIdsByUserId(1001L)).thenReturn(Set.of());
 
         boolean result = documentAclService.canRead(1001L, document);
@@ -273,7 +274,7 @@ class DocumentAclServiceImplTest {
         KbDocument document = buildDocument(1L, 2002L, "GROUP_SHARED", 1, 0);
 
         when(groupMembershipService.listGroupIdsByUserId(1001L)).thenReturn(Set.of(10L));
-        when(kbDocumentGroupRepository.selectCount(any())).thenReturn(1L);
+        when(kbDocumentGroupMapper.selectCount(any())).thenReturn(1L);
 
         boolean result = documentAclService.canRead(1001L, document);
 
@@ -286,8 +287,8 @@ class DocumentAclServiceImplTest {
         KbDocument document = buildDocument(1L, 2002L, "GROUP_SHARED", 1, 0);
 
         when(groupMembershipService.listGroupIdsByUserId(1001L)).thenReturn(Set.of(10L));
-        when(kbDocumentGroupRepository.selectCount(any())).thenReturn(0L);
-        when(kbDocumentAclRepository.selectCount(any())).thenReturn(0L);
+        when(kbDocumentGroupMapper.selectCount(any())).thenReturn(0L);
+        when(kbDocumentAclMapper.selectCount(any())).thenReturn(0L);
 
         boolean result = documentAclService.canRead(1001L, document);
 
@@ -298,7 +299,7 @@ class DocumentAclServiceImplTest {
     @DisplayName("GROUP_SHARED 仅提供组内读取能力，不应自动带管理权")
     void canManage_shouldReturnFalse_whenUserOnlyBelongsToSharedGroup() {
         KbDocument document = buildDocument(1L, 2002L, "GROUP_SHARED", 1, 0);
-        when(kbDocumentAclRepository.selectCount(any())).thenReturn(0L);
+        when(kbDocumentAclMapper.selectCount(any())).thenReturn(0L);
 
         boolean result = documentAclService.canManage(1001L, document);
 
@@ -309,7 +310,7 @@ class DocumentAclServiceImplTest {
     @DisplayName("GROUP_SHARED 仅提供组内读取能力，不应自动带分享权")
     void canShare_shouldReturnFalse_whenUserOnlyBelongsToSharedGroup() {
         KbDocument document = buildDocument(1L, 2002L, "GROUP_SHARED", 1, 0);
-        when(kbDocumentAclRepository.selectCount(any())).thenReturn(0L);
+        when(kbDocumentAclMapper.selectCount(any())).thenReturn(0L);
 
         boolean result = documentAclService.canShare(1001L, document);
 
@@ -324,7 +325,7 @@ class DocumentAclServiceImplTest {
         boolean result = documentAclService.canRead(1001L, document);
 
         assertFalse(result);
-        verifyNoInteractions(kbDocumentAclRepository);
+        verifyNoInteractions(kbDocumentAclMapper);
     }
 
     @Test
@@ -335,7 +336,7 @@ class DocumentAclServiceImplTest {
         boolean result = documentAclService.canManage(1001L, document);
 
         assertFalse(result);
-        verifyNoInteractions(kbDocumentAclRepository);
+        verifyNoInteractions(kbDocumentAclMapper);
     }
 
     @Test
@@ -346,7 +347,7 @@ class DocumentAclServiceImplTest {
         boolean result = documentAclService.canShare(1001L, document);
 
         assertFalse(result);
-        verifyNoInteractions(kbDocumentAclRepository);
+        verifyNoInteractions(kbDocumentAclMapper);
     }
 
     @Test
@@ -357,7 +358,7 @@ class DocumentAclServiceImplTest {
         boolean result = documentAclService.canRead(1001L, document);
 
         assertFalse(result);
-        verifyNoInteractions(kbDocumentAclRepository);
+        verifyNoInteractions(kbDocumentAclMapper);
     }
 
     @Test
@@ -370,7 +371,7 @@ class DocumentAclServiceImplTest {
         assertTrue(documentAclService.canRead(1001L, ownerDocument));
         assertFalse(documentAclService.canRead(1001L, otherUserDocument));
 
-        verifyNoInteractions(kbDocumentAclRepository);
+        verifyNoInteractions(kbDocumentAclMapper);
     }
 
     @Test
@@ -382,7 +383,7 @@ class DocumentAclServiceImplTest {
         boolean result = documentAclService.canRead(1001L, document);
 
         assertFalse(result);
-        verifyNoInteractions(kbDocumentAclRepository);
+        verifyNoInteractions(kbDocumentAclMapper);
     }
 
     @Test
@@ -394,7 +395,7 @@ class DocumentAclServiceImplTest {
         boolean result = documentAclService.canRead(1001L, document);
 
         assertFalse(result);
-        verifyNoInteractions(kbDocumentAclRepository);
+        verifyNoInteractions(kbDocumentAclMapper);
     }
 
     private KbDocument buildDocument(Long id,

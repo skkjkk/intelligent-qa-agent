@@ -1,12 +1,12 @@
 // package com.jujiu.agent.service.impl;
 
 // import com.fasterxml.jackson.databind.ObjectMapper;
-// import com.jujiu.agent.model.dto.request.ExecuteToolRequest;
-// import com.jujiu.agent.model.dto.response.ExecuteToolResponse;
-// import com.jujiu.agent.model.dto.response.ToolResponse;
-// import com.jujiu.agent.service.ToolService;
-// import com.jujiu.agent.tool.AbstractTool;
-// import com.jujiu.agent.tool.ToolRegistry;
+// import com.jujiu.agent.module.tool.api.request.ExecuteToolRequest;
+// import com.jujiu.agent.module.tool.api.response.ExecuteToolResponse;
+// import com.jujiu.agent.module.tool.api.response.ToolResponse;
+// import com.jujiu.agent.module.tool.application.service.ToolService;
+// import com.jujiu.agent.module.tool.runtime.AbstractTool;
+// import com.jujiu.agent.module.tool.application.registry.ToolRegistry;
 // import org.junit.jupiter.api.BeforeEach;
 // import org.junit.jupiter.api.Test;
 // import org.junit.jupiter.api.extension.ExtendWith;

@@ -1,24 +1,25 @@
 package com.jujiu.agent.service.kb.impl;
 
-import com.jujiu.agent.common.exception.BusinessException;
-import com.jujiu.agent.config.KnowledgeBaseProperties;
-import com.jujiu.agent.model.dto.response.DocumentProcessStatusResponse;
-import com.jujiu.agent.model.dto.response.KbBatchOperationResponse;
-import com.jujiu.agent.model.dto.response.KbDocumentResponse;
-import com.jujiu.agent.model.entity.KbChunk;
-import com.jujiu.agent.model.entity.KbDocument;
-import com.jujiu.agent.model.enums.KbDocumentStatus;
-import com.jujiu.agent.model.enums.KbProcessStatus;
-import com.jujiu.agent.mq.DocumentProcessProducer;
-import com.jujiu.agent.repository.KbChunkRepository;
-import com.jujiu.agent.repository.KbDocumentGroupRepository;
-import com.jujiu.agent.repository.KbDocumentProcessLogRepository;
-import com.jujiu.agent.repository.KbDocumentRepository;
-import com.jujiu.agent.service.kb.DocumentAclAuditService;
-import com.jujiu.agent.service.kb.DocumentAclService;
-import com.jujiu.agent.service.kb.ElasticsearchIndexService;
-import com.jujiu.agent.service.kb.EmbeddingService;
-import com.jujiu.agent.storage.MinioFileService;
+import com.jujiu.agent.module.kb.application.service.impl.DocumentServiceImpl;
+import com.jujiu.agent.shared.exception.BusinessException;
+import com.jujiu.agent.module.kb.infrastructure.config.KnowledgeBaseProperties;
+import com.jujiu.agent.module.kb.api.response.DocumentProcessStatusResponse;
+import com.jujiu.agent.module.kb.api.response.KbBatchOperationResponse;
+import com.jujiu.agent.module.kb.api.response.KbDocumentResponse;
+import com.jujiu.agent.module.kb.domain.entity.KbChunk;
+import com.jujiu.agent.module.kb.domain.entity.KbDocument;
+import com.jujiu.agent.module.kb.domain.enums.KbDocumentStatus;
+import com.jujiu.agent.module.kb.domain.enums.KbProcessStatus;
+import com.jujiu.agent.module.kb.infrastructure.mq.DocumentProcessProducer;
+import com.jujiu.agent.module.kb.infrastructure.mapper.KbChunkMapper;
+import com.jujiu.agent.module.kb.infrastructure.mapper.KbDocumentGroupMapper;
+import com.jujiu.agent.module.kb.infrastructure.mapper.KbDocumentProcessLogMapper;
+import com.jujiu.agent.module.kb.infrastructure.mapper.KbDocumentMapper;
+import com.jujiu.agent.module.kb.application.service.DocumentAclAuditService;
+import com.jujiu.agent.module.kb.application.service.DocumentAclService;
+import com.jujiu.agent.module.kb.application.service.ElasticsearchIndexService;
+import com.jujiu.agent.module.kb.application.service.EmbeddingService;
+import com.jujiu.agent.module.kb.infrastructure.storage.MinioFileService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -34,43 +35,43 @@ import static org.mockito.Mockito.*;
 class DocumentServiceImplTest {
 
     private MinioFileService minioFileService;
-    private KbDocumentRepository kbDocumentRepository;
-    private KbDocumentProcessLogRepository kbDocumentProcessLogRepository;
-    private KbChunkRepository kbChunkRepository;
+    private KbDocumentMapper kbDocumentMapper;
+    private KbDocumentProcessLogMapper kbDocumentProcessLogMapper;
+    private KbChunkMapper kbChunkMapper;
     private ElasticsearchIndexService elasticsearchIndexService;
     private DocumentProcessProducer documentProcessProducer;
     private EmbeddingService embeddingService;
     private DocumentAclService documentAclService;
     private DocumentAclAuditService documentAclAuditService;
-    private KbDocumentGroupRepository kbDocumentGroupRepository;
+    private KbDocumentGroupMapper kbDocumentGroupMapper;
     private KnowledgeBaseProperties knowledgeBaseProperties;
     private DocumentServiceImpl documentService;
 
     @BeforeEach
     void setUp() {
         minioFileService = mock(MinioFileService.class);
-        kbDocumentRepository = mock(KbDocumentRepository.class);
-        kbDocumentProcessLogRepository = mock(KbDocumentProcessLogRepository.class);
-        kbChunkRepository = mock(KbChunkRepository.class);
+        kbDocumentMapper = mock(KbDocumentMapper.class);
+        kbDocumentProcessLogMapper = mock(KbDocumentProcessLogMapper.class);
+        kbChunkMapper = mock(KbChunkMapper.class);
         elasticsearchIndexService = mock(ElasticsearchIndexService.class);
         documentProcessProducer = mock(DocumentProcessProducer.class);
         embeddingService = mock(EmbeddingService.class);
         documentAclService = mock(DocumentAclService.class);
         documentAclAuditService = mock(DocumentAclAuditService.class);
-        kbDocumentGroupRepository = mock(KbDocumentGroupRepository.class);
+        kbDocumentGroupMapper = mock(KbDocumentGroupMapper.class);
         knowledgeBaseProperties = mock(KnowledgeBaseProperties.class);
         
         documentService = new DocumentServiceImpl(
                 minioFileService,
-                kbDocumentRepository,
-                kbDocumentProcessLogRepository,
-                kbChunkRepository,
+                kbDocumentMapper,
+                kbDocumentProcessLogMapper,
+                kbChunkMapper,
                 elasticsearchIndexService,
                 documentProcessProducer,
                 embeddingService,
                 documentAclService,
                 documentAclAuditService,
-                kbDocumentGroupRepository,
+                kbDocumentGroupMapper,
                 knowledgeBaseProperties
         );
     }
@@ -79,7 +80,7 @@ class DocumentServiceImplTest {
     @DisplayName("ACL 可读用户应能查询文档详情")
     void getDocument_shouldReturnDocument_whenUserCanRead() {
         KbDocument document = buildDocument(1L, 2002L, "PRIVATE");
-        when(kbDocumentRepository.selectById(1L)).thenReturn(document);
+        when(kbDocumentMapper.selectById(1L)).thenReturn(document);
         when(documentAclService.canRead(1001L, document)).thenReturn(true);
 
         KbDocumentResponse response = documentService.getDocument(1001L, 1L);
@@ -94,7 +95,7 @@ class DocumentServiceImplTest {
     @DisplayName("无读取权限时查询文档详情应抛异常")
     void getDocument_shouldThrow_whenUserCannotRead() {
         KbDocument document = buildDocument(1L, 2002L, "PRIVATE");
-        when(kbDocumentRepository.selectById(1L)).thenReturn(document);
+        when(kbDocumentMapper.selectById(1L)).thenReturn(document);
         when(documentAclService.canRead(1001L, document)).thenReturn(false);
 
         assertThrows(BusinessException.class, () -> documentService.getDocument(1001L, 1L));
@@ -110,7 +111,7 @@ class DocumentServiceImplTest {
         KbDocument readableDocument = buildDocument(1L, 2002L, "PRIVATE");
 
         when(documentAclService.listReadableDocumentIds(1001L, 1L)).thenReturn(Set.of(1L));
-        when(kbDocumentRepository.selectList(any())).thenReturn(List.of(readableDocument));
+        when(kbDocumentMapper.selectList(any())).thenReturn(List.of(readableDocument));
 
         List<KbDocumentResponse> responses = documentService.listDocuments(1001L, 1L);
 
@@ -119,7 +120,7 @@ class DocumentServiceImplTest {
         assertEquals(1L, responses.get(0).getId());
 
         verify(documentAclService, times(1)).listReadableDocumentIds(1001L, 1L);
-        verify(kbDocumentRepository, times(1)).selectList(any());
+        verify(kbDocumentMapper, times(1)).selectList(any());
     }
 
     @Test
@@ -131,7 +132,7 @@ class DocumentServiceImplTest {
         document.setIndexStatus("SUCCESS");
         document.setChunkCount(3);
 
-        when(kbDocumentRepository.selectById(1L)).thenReturn(document);
+        when(kbDocumentMapper.selectById(1L)).thenReturn(document);
         when(documentAclService.canRead(1001L, document)).thenReturn(true);
 
         DocumentProcessStatusResponse response = documentService.getDocumentStatus(1001L, 1L);
@@ -147,13 +148,13 @@ class DocumentServiceImplTest {
     @DisplayName("只有可管理用户才能删除文档")
     void deleteDocument_shouldUpdateDeletedFlag_whenUserCanManage() {
         KbDocument document = buildDocument(1L, 2002L, "PRIVATE");
-        when(kbDocumentRepository.selectById(1L)).thenReturn(document);
+        when(kbDocumentMapper.selectById(1L)).thenReturn(document);
         when(documentAclService.canManage(1001L, document)).thenReturn(true);
 
         documentService.deleteDocument(1001L, 1L);
 
         assertEquals(1, document.getDeleted());
-        verify(kbDocumentRepository, times(1)).updateById(document);
+        verify(kbDocumentMapper, times(1)).updateById(document);
         verify(documentAclService, times(1)).canManage(1001L, document);
     }
 
@@ -161,7 +162,7 @@ class DocumentServiceImplTest {
     @DisplayName("仅有 SHARE 或 READ 的用户不应能索引文档")
     void indexDocument_shouldThrow_whenUserCannotManage() {
         KbDocument document = buildDocument(1L, 2002L, "PRIVATE");
-        when(kbDocumentRepository.selectById(1L)).thenReturn(document);
+        when(kbDocumentMapper.selectById(1L)).thenReturn(document);
         when(documentAclService.canManage(1001L, document)).thenReturn(false);
 
         assertThrows(BusinessException.class, () -> documentService.indexDocument(1001L, 1L));
@@ -182,9 +183,9 @@ class DocumentServiceImplTest {
 
         KbChunk chunk = buildChunk(11L, 1L);
 
-        when(kbDocumentRepository.selectById(1L)).thenReturn(document);
+        when(kbDocumentMapper.selectById(1L)).thenReturn(document);
         when(documentAclService.canManage(1001L, document)).thenReturn(true);
-        when(kbChunkRepository.selectList(any())).thenReturn(List.of(chunk), List.of(chunk));
+        when(kbChunkMapper.selectList(any())).thenReturn(List.of(chunk), List.of(chunk));
         when(embeddingService.embedDocument(anyString())).thenReturn(new float[]{0.1f, 0.2f});
         when(elasticsearchIndexService.countByDocumentId(1L)).thenReturn(1L);
 
@@ -213,17 +214,17 @@ class DocumentServiceImplTest {
         KbChunk chunk1 = buildChunk(101L, 1L);
         KbChunk chunk2 = buildChunk(102L, 2L);
 
-        when(kbDocumentRepository.selectList(any()))
+        when(kbDocumentMapper.selectList(any()))
                 .thenReturn(List.of(manageableDocument1, manageableDocument2, readOnlyDocument));
 
         when(documentAclService.canManage(1001L, manageableDocument1)).thenReturn(true);
         when(documentAclService.canManage(1001L, manageableDocument2)).thenReturn(true);
         when(documentAclService.canManage(1001L, readOnlyDocument)).thenReturn(false);
 
-        when(kbDocumentRepository.selectById(1L)).thenReturn(manageableDocument1);
-        when(kbDocumentRepository.selectById(2L)).thenReturn(manageableDocument2);
+        when(kbDocumentMapper.selectById(1L)).thenReturn(manageableDocument1);
+        when(kbDocumentMapper.selectById(2L)).thenReturn(manageableDocument2);
 
-        when(kbChunkRepository.selectList(any()))
+        when(kbChunkMapper.selectList(any()))
                 .thenReturn(List.of(chunk1))
                 .thenReturn(List.of(chunk2));
 
@@ -244,7 +245,7 @@ class DocumentServiceImplTest {
 
         verify(elasticsearchIndexService, times(2)).ensureIndexExists();
         verify(elasticsearchIndexService, times(2)).indexChunk(any(KbDocument.class), any(KbChunk.class), any());
-        verify(kbDocumentRepository, never()).selectById(3L);
+        verify(kbDocumentMapper, never()).selectById(3L);
     }
 
     @Test
@@ -262,17 +263,17 @@ class DocumentServiceImplTest {
         KbChunk chunk1 = buildChunk(201L, 11L);
         KbChunk chunk2 = buildChunk(202L, 12L);
 
-        when(kbDocumentRepository.selectList(any()))
+        when(kbDocumentMapper.selectList(any()))
                 .thenReturn(List.of(manageableFailedDocument1, manageableFailedDocument2, readOnlyFailedDocument));
 
         when(documentAclService.canManage(1001L, manageableFailedDocument1)).thenReturn(true);
         when(documentAclService.canManage(1001L, manageableFailedDocument2)).thenReturn(true);
         when(documentAclService.canManage(1001L, readOnlyFailedDocument)).thenReturn(false);
 
-        when(kbDocumentRepository.selectById(11L)).thenReturn(manageableFailedDocument1);
-        when(kbDocumentRepository.selectById(12L)).thenReturn(manageableFailedDocument2);
+        when(kbDocumentMapper.selectById(11L)).thenReturn(manageableFailedDocument1);
+        when(kbDocumentMapper.selectById(12L)).thenReturn(manageableFailedDocument2);
 
-        when(kbChunkRepository.selectList(any()))
+        when(kbChunkMapper.selectList(any()))
                 .thenReturn(List.of(chunk1))
                 .thenReturn(List.of(chunk1))
                 .thenReturn(List.of(chunk2))
@@ -304,7 +305,7 @@ class DocumentServiceImplTest {
         verify(elasticsearchIndexService, times(1)).countByDocumentId(11L);
         verify(elasticsearchIndexService, times(1)).countByDocumentId(12L);
 
-        verify(kbDocumentRepository, never()).selectById(13L);
+        verify(kbDocumentMapper, never()).selectById(13L);
         verify(elasticsearchIndexService, never()).deleteByDocumentIdAndExcludeChunkIds(eq(13L), any());
     }
 

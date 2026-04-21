@@ -1,10 +1,10 @@
 package com.jujiu.agent.service.kb.impl;
 
-import com.jujiu.agent.common.exception.BusinessException;
-import com.jujiu.agent.model.dto.response.KbQueryStatsResponse;
-import com.jujiu.agent.repository.KbQueryFeedbackRepository;
-import com.jujiu.agent.repository.KbQueryLogRepository;
-import com.jujiu.agent.service.kb.impl.KnowledgeBaseQueryStatsServiceImpl;
+import com.jujiu.agent.module.kb.application.service.impl.KnowledgeBaseQueryStatsServiceImpl;
+import com.jujiu.agent.shared.exception.BusinessException;
+import com.jujiu.agent.module.kb.api.response.KbQueryStatsResponse;
+import com.jujiu.agent.module.kb.infrastructure.mapper.KbQueryFeedbackMapper;
+import com.jujiu.agent.module.kb.infrastructure.mapper.KbQueryLogMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -19,15 +19,15 @@ import static org.mockito.Mockito.*;
 
 class KnowledgeBaseQueryStatsServiceImplTest {
 
-    private KbQueryLogRepository kbQueryLogRepository;
-    private KbQueryFeedbackRepository kbQueryFeedbackRepository;
+    private KbQueryLogMapper kbQueryLogMapper;
+    private KbQueryFeedbackMapper kbQueryFeedbackMapper;
     private KnowledgeBaseQueryStatsServiceImpl service;
 
     @BeforeEach
     void setUp() {
-        kbQueryLogRepository = mock(KbQueryLogRepository.class);
-        kbQueryFeedbackRepository = mock(KbQueryFeedbackRepository.class);
-        service = new KnowledgeBaseQueryStatsServiceImpl(kbQueryLogRepository, kbQueryFeedbackRepository);
+        kbQueryLogMapper = mock(KbQueryLogMapper.class);
+        kbQueryFeedbackMapper = mock(KbQueryFeedbackMapper.class);
+        service = new KnowledgeBaseQueryStatsServiceImpl(kbQueryLogMapper, kbQueryFeedbackMapper);
     }
 
     @Test
@@ -36,7 +36,7 @@ class KnowledgeBaseQueryStatsServiceImplTest {
         Long userId = 1001L;
         Long kbId = 1L;
 
-        when(kbQueryLogRepository.aggregateSummary(userId, kbId)).thenReturn(Map.of(
+        when(kbQueryLogMapper.aggregateSummary(userId, kbId)).thenReturn(Map.of(
                 "totalQueries", 10L,
                 "successQueries", 8L,
                 "emptyQueries", 1L,
@@ -45,23 +45,23 @@ class KnowledgeBaseQueryStatsServiceImplTest {
                 "avgTotalTokens", 320L
         ));
 
-        when(kbQueryFeedbackRepository.aggregateQuality(userId, kbId)).thenReturn(Map.of(
+        when(kbQueryFeedbackMapper.aggregateQuality(userId, kbId)).thenReturn(Map.of(
                 "helpfulCount", 6L,
                 "unhelpfulCount", 2L,
                 "avgRating", 4.5
         ));
 
-        when(kbQueryFeedbackRepository.aggregateRatingDistribution(userId, kbId)).thenReturn(List.of(
+        when(kbQueryFeedbackMapper.aggregateRatingDistribution(userId, kbId)).thenReturn(List.of(
                 Map.of("dimName", "4", "dimCount", 3L),
                 Map.of("dimName", "5", "dimCount", 5L)
         ));
 
-        when(kbQueryLogRepository.aggregateTrend(eq(userId), eq(kbId), any())).thenReturn(List.of(
+        when(kbQueryLogMapper.aggregateTrend(eq(userId), eq(kbId), any())).thenReturn(List.of(
                 Map.of("dayVal", "2026-04-19", "dayCount", 4L),
                 Map.of("dayVal", "2026-04-20", "dayCount", 6L)
         ));
 
-        when(kbQueryLogRepository.selectCount(any())).thenReturn(10L, 8L, 1L, 1L);
+        when(kbQueryLogMapper.selectCount(any())).thenReturn(10L, 8L, 1L, 1L);
 
         KbQueryStatsResponse result = service.getQueryStats(
                 userId, kbId, 30, ZoneId.of("Asia/Shanghai"), 10
@@ -86,8 +86,8 @@ class KnowledgeBaseQueryStatsServiceImplTest {
         assertEquals(2, result.getTrend7Days().size());
         assertEquals(2, result.getTrend30Days().size());
 
-        verify(kbQueryLogRepository, times(2)).aggregateTrend(eq(userId), eq(kbId), any());
-        verify(kbQueryLogRepository, times(4)).selectCount(any());
+        verify(kbQueryLogMapper, times(2)).aggregateTrend(eq(userId), eq(kbId), any());
+        verify(kbQueryLogMapper, times(4)).selectCount(any());
     }
 
     @Test
@@ -97,6 +97,6 @@ class KnowledgeBaseQueryStatsServiceImplTest {
                 () -> service.getQueryStats(-1L, 1L, 30, ZoneId.of("Asia/Shanghai"), 10));
 
         assertTrue(ex.getMessage().contains("userId 不能为空"));
-        verifyNoInteractions(kbQueryLogRepository, kbQueryFeedbackRepository);
+        verifyNoInteractions(kbQueryLogMapper, kbQueryFeedbackMapper);
     }
 }
