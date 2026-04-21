@@ -1,13 +1,13 @@
 package com.jujiu.agent.service.impl;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.jujiu.agent.module.chat.infrastructure.deepseek.DeepSeekClient;
-import com.jujiu.agent.module.chat.infrastructure.deepseek.DeepSeekResult;
 import com.jujiu.agent.module.chat.infrastructure.config.DeepSeekProperties;
 import com.jujiu.agent.module.chat.api.request.SendMessageRequest;
 import com.jujiu.agent.module.chat.api.response.ChatResponse;
 import com.jujiu.agent.module.chat.domain.entity.Message;
 import com.jujiu.agent.module.chat.domain.entity.Session;
+import com.jujiu.agent.module.chat.infrastructure.llm.LlmClientRouter;
+import com.jujiu.agent.module.chat.infrastructure.llm.LlmResult;
 import com.jujiu.agent.module.chat.infrastructure.mapper.MessageMapper;
 import com.jujiu.agent.module.chat.infrastructure.mapper.SessionMapper;
 import com.jujiu.agent.module.chat.application.service.ChatPersistenceService;
@@ -31,8 +31,8 @@ class ChatServiceImplTest {
 
     private MessageMapper messageMapper;
     private SessionMapper sessionMapper;
-    private DeepSeekClient deepSeekClient;
     private DeepSeekProperties deepSeekProperties;
+    private LlmClientRouter llmClientRouter;
     private FunctionCallingService functionCallingService;
     private ExecutorService chatExecutor;
     private ObjectMapper objectMapper;
@@ -45,10 +45,10 @@ class ChatServiceImplTest {
     void setUp() {
         messageMapper = mock(MessageMapper.class);
         sessionMapper = mock(SessionMapper.class);
-        deepSeekClient = mock(DeepSeekClient.class);
         deepSeekProperties = new DeepSeekProperties();
         deepSeekProperties.setSystemPrompt("你是一个测试助手");
         deepSeekProperties.setMaxContextMessages(20);
+        llmClientRouter = mock(LlmClientRouter.class);
         functionCallingService = mock(FunctionCallingService.class);
         chatExecutor = mock(ExecutorService.class);
         objectMapper = new ObjectMapper();
@@ -59,8 +59,8 @@ class ChatServiceImplTest {
         chatService = new ChatServiceImpl(
                 messageMapper,
                 sessionMapper,
-                deepSeekClient,
                 deepSeekProperties,
+                llmClientRouter,
                 functionCallingService,
                 chatExecutor,
                 objectMapper,
@@ -99,7 +99,7 @@ class ChatServiceImplTest {
                 .createdAt(LocalDateTime.now())
                 .build();
 
-        DeepSeekResult chatResult = new DeepSeekResult();
+        LlmResult chatResult = new LlmResult();
         chatResult.setReply("这是 AI 回复");
         chatResult.setPromptTokens(100);
         chatResult.setCompletionTokens(50);
@@ -166,7 +166,7 @@ class ChatServiceImplTest {
                 .createdAt(LocalDateTime.now())
                 .build();
 
-        DeepSeekResult chatResult = new DeepSeekResult();
+        LlmResult chatResult = new LlmResult();
         chatResult.setReply("这是 AI 回复");
         chatResult.setPromptTokens(120);
         chatResult.setCompletionTokens(60);
@@ -231,7 +231,7 @@ class ChatServiceImplTest {
                 .createdAt(LocalDateTime.now())
                 .build();
 
-        DeepSeekResult chatResult = new DeepSeekResult();
+        LlmResult chatResult = new LlmResult();
         chatResult.setReply("普通聊天回复");
         chatResult.setPromptTokens(80);
         chatResult.setCompletionTokens(40);

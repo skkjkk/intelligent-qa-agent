@@ -4,11 +4,11 @@ import cn.hutool.core.util.IdUtil;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.jujiu.agent.module.chat.infrastructure.mapper.SessionMapper;
 import com.jujiu.agent.shared.constant.BusinessConstants;
-import com.jujiu.agent.module.chat.infrastructure.deepseek.DeepSeekMessage;
 import com.jujiu.agent.module.chat.domain.entity.Message;
 import com.jujiu.agent.module.chat.domain.entity.Session;
 import com.jujiu.agent.module.chat.infrastructure.mapper.MessageMapper;
 import com.jujiu.agent.module.chat.application.service.ChatPersistenceService;
+import com.jujiu.agent.module.chat.infrastructure.llm.LlmMessage;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
@@ -120,21 +120,21 @@ public class ChatPersistenceServiceImpl implements ChatPersistenceService {
      * @param messagesToSave 需要保存的消息列表，包含 Function Calling 过程中的各类消息
      */
     @Override
-    public void saveIntermediateMessages(String sessionId, List<DeepSeekMessage> messagesToSave) {
+    public void saveIntermediateMessages(String sessionId, List<LlmMessage> messagesToSave) {
         // 1. 空值检查，如果消息列表为空则直接返回
         if (messagesToSave == null || messagesToSave.isEmpty()) {
             return;
         }
 
         // 2. 遍历所有待保存的消息
-        for (DeepSeekMessage message : messagesToSave) {
+        for (LlmMessage message : messagesToSave) {
             try {
                 // 3. 保存带 tool_calls 的 assistant 消息（AI 发起的工具调用请求）
                 if (message.getToolCalls() != null && !message.getToolCalls().isEmpty()) {
                     Message toolCallMessage = Message.builder()
                             .messageId(generateMessageId())
                             .sessionId(sessionId)
-                            .role(message.getRole().getValue())
+                            .role(message.getRole())
                             .content(message.getContent())
                             .toolCalls(objectMapper.writeValueAsString(message.getToolCalls()))
                             .createdAt(LocalDateTime.now())
@@ -149,7 +149,7 @@ public class ChatPersistenceServiceImpl implements ChatPersistenceService {
                     Message toolMessage = Message.builder()
                             .messageId(generateMessageId())
                             .sessionId(sessionId)
-                            .role(message.getRole().getValue())
+                            .role(message.getRole())
                             .content(message.getContent())
                             .toolCallId(message.getToolCallId())
                             .createdAt(LocalDateTime.now())

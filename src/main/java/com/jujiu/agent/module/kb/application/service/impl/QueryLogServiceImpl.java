@@ -3,7 +3,7 @@ package com.jujiu.agent.module.kb.application.service.impl;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.jujiu.agent.module.chat.infrastructure.deepseek.DeepSeekResult;
+import com.jujiu.agent.module.chat.infrastructure.llm.LlmResult;
 import com.jujiu.agent.shared.exception.BusinessException;
 import com.jujiu.agent.module.kb.application.model.ChunkSearchResult;
 import com.jujiu.agent.shared.result.ResultCode;
@@ -83,7 +83,7 @@ public class QueryLogServiceImpl implements QueryLogService {
      * @param kbId 知识库 ID
      * @param request 原始请求
      * @param topK 检索数量
-     * @param deepSeekResult 模型调用结果
+     * @param llmResult 模型调用结果
      * @param citations 引用列表
      * @param latencyMs 总耗时
      * @param status 查询状态
@@ -95,7 +95,7 @@ public class QueryLogServiceImpl implements QueryLogService {
                                    Long kbId,
                                    QueryKnowledgeBaseRequest request,
                                    Integer topK,
-                                   DeepSeekResult deepSeekResult,
+                                   LlmResult llmResult,
                                    List<CitationResponse> citations,
                                    long latencyMs,
                                    String status,
@@ -108,13 +108,13 @@ public class QueryLogServiceImpl implements QueryLogService {
                 .querySource(DEFAULT_QUERY_SOURCE)
                 .question(request.getQuestion())
                 .rewrittenQuestion(null)
-                .answer(deepSeekResult != null ? deepSeekResult.getReply() : "知识库中没有足够信息支持回答该问题。")
+                .answer(llmResult != null ? llmResult.getReply() : "知识库中没有足够信息支持回答该问题。")
                 .retrievalTopK(topK)
                 .retrievalMode(DEFAULT_RETRIEVAL_MODE)
                 .citedChunkIds(toCitedChunkIdsJson(citations))
-                .promptTokens(deepSeekResult != null ? deepSeekResult.getPromptTokens() : null)
-                .completionTokens(deepSeekResult != null ? deepSeekResult.getCompletionTokens() : null)
-                .totalTokens(deepSeekResult != null ? deepSeekResult.getTotalTokens() : null)
+                .promptTokens(llmResult != null ? llmResult.getPromptTokens() : null)
+                .completionTokens(llmResult != null ? llmResult.getCompletionTokens() : null)
+                .totalTokens(llmResult != null ? llmResult.getTotalTokens() : null)
                 .latencyMs(Math.toIntExact(latencyMs))
                 .status(status)
                 .errorMessage(errorMessage)

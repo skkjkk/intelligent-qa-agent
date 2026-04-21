@@ -5,16 +5,12 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.jujiu.agent.module.chat.infrastructure.deepseek.DeepSeekClient;
-import com.jujiu.agent.module.chat.infrastructure.deepseek.DeepSeekResult;
 import com.jujiu.agent.module.chat.infrastructure.mapper.MessageMapper;
 import com.jujiu.agent.module.chat.infrastructure.mapper.SessionMapper;
 import com.jujiu.agent.shared.constant.BusinessConstants;
 import com.jujiu.agent.shared.exception.BusinessException;
 import com.jujiu.agent.shared.result.ResultCode;
 import com.jujiu.agent.module.chat.infrastructure.config.DeepSeekProperties;
-import com.jujiu.agent.module.chat.infrastructure.deepseek.DeepSeekMessage;
-import com.jujiu.agent.module.chat.infrastructure.deepseek.ToolCallDTO;
 import com.jujiu.agent.module.chat.api.request.CreateSessionRequest;
 import com.jujiu.agent.module.chat.api.request.SendMessageRequest;
 import com.jujiu.agent.module.chat.api.response.ChatResponse;
@@ -26,6 +22,10 @@ import com.jujiu.agent.module.chat.application.service.ChatPersistenceService;
 import com.jujiu.agent.module.chat.application.service.ChatRateLimitService;
 import com.jujiu.agent.module.chat.application.service.ChatService;
 import com.jujiu.agent.module.chat.application.service.FunctionCallingService;
+import com.jujiu.agent.module.chat.infrastructure.llm.LlmClientRouter;
+import com.jujiu.agent.module.chat.infrastructure.llm.LlmMessage;
+import com.jujiu.agent.module.chat.infrastructure.llm.LlmResult;
+import com.jujiu.agent.module.chat.infrastructure.llm.LlmToolCall;
 import com.jujiu.agent.module.kb.application.service.RagService;
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
@@ -53,10 +53,10 @@ public class ChatServiceImpl implements ChatService {
     private final MessageMapper messageMapper;
     /** 会话仓储。 */
     private final SessionMapper sessionMapper;
-    /** DeepSeek 客户端。 */
-    private final DeepSeekClient deepSeekClient;
     /** DeepSeek 配置属性。 */
     private final DeepSeekProperties deepSeekProperties;
+    /** LLM 路由器。 */
+    private final LlmClientRouter llmClientRouter;
     /** 函数调用服务。 */
     private final FunctionCallingService functionCallingService;
     /** 聊天任务线程池。 */
@@ -75,7 +75,6 @@ public class ChatServiceImpl implements ChatService {
      *
      * @param messageMapper       消息仓储
      * @param sessionMapper       会话仓储
-     * @param deepSeekClient          DeepSeek 客户端
      * @param deepSeekProperties      DeepSeek 配置属性
      * @param functionCallingService  函数调用服务
      * @param chatExecutor            聊天任务线程池
@@ -86,8 +85,8 @@ public class ChatServiceImpl implements ChatService {
      */
     public ChatServiceImpl(MessageMapper messageMapper,
                            SessionMapper sessionMapper,
-                           DeepSeekClient deepSeekClient,
                            DeepSeekProperties deepSeekProperties,
+                           LlmClientRouter llmClientRouter,
                            FunctionCallingService functionCallingService,
                            ExecutorService chatExecutor,
                            ObjectMapper objectMapper,
@@ -96,8 +95,8 @@ public class ChatServiceImpl implements ChatService {
                            RagService ragService) {
         this.messageMapper = messageMapper;
         this.sessionMapper = sessionMapper;
-        this.deepSeekClient = deepSeekClient;
         this.deepSeekProperties = deepSeekProperties;
+        this.llmClientRouter = llmClientRouter;
         this.functionCallingService = functionCallingService;
         this.chatExecutor = chatExecutor;
         this.objectMapper = objectMapper;
@@ -242,13 +241,13 @@ public class ChatServiceImpl implements ChatService {
         ChatPrepareResult prepareResult = prepareChat(userId, request);
         Session session = prepareResult.getSession();
         Message message = prepareResult.getUserMessage();
-        List<DeepSeekMessage> deepSeekMessages = prepareResult.getDeepSeekMessages();
+        List<LlmMessage> llmMessages = prepareResult.getLlmMessages();
         
         // 2. 调用 DeepSeek 函数调用接口获取 AI 回复
         log.info("[CHAT][DEEPSEEK_CALL] 开始调用 DeepSeek API - sessionId={}, contextSize={}", 
-                request.getSessionId(), deepSeekMessages.size());
+                request.getSessionId(), llmMessages.size());
         
-        DeepSeekResult result = functionCallingService.chatWithTools(userId, deepSeekMessages);
+        LlmResult result = functionCallingService.chatWithTools(userId, llmMessages);
         String aiReply = result.getReply();
         
         log.info("[CHAT][DEEPSEEK_RESPONSE] DeepSeek 返回成功 - sessionId={}, totalTokens={}, promptTokens={}, completionTokens={}", 
@@ -329,12 +328,10 @@ public class ChatServiceImpl implements ChatService {
      * @return 生成的会话标题（不超过 10 个字）
      */
     private String generateTitle(String title){
-        // 1. 构建请求 AI 生成标题的消息
-        DeepSeekMessage deepSeekMessage = new DeepSeekMessage();
-        deepSeekMessage.setRole(DeepSeekMessage.MessageRole.USER);
-        deepSeekMessage.setContent("请根据以下问题，生成一个简短的会话标题，不超过 10 个字，只返回标题本身：" + title);
-        // 2. 调用 DeepSeek API 生成标题并返回
-        DeepSeekResult result = deepSeekClient.chat(List.of(deepSeekMessage));
+        // 1. 构建请求 AI 生成标题的统一消息。
+        LlmMessage titlePrompt = LlmMessage.user("请根据以下问题，生成一个简短的会话标题，不超过 10 个字，只返回标题本身：" + title);
+        // 2. 通过默认 LLM 路由生成标题，避免业务层继续绑定到具体提供商。
+        LlmResult result = llmClientRouter.getDefault().chat(List.of(titlePrompt));
         return result.getReply();
     }
 
@@ -360,35 +357,33 @@ public class ChatServiceImpl implements ChatService {
      * 支持普通消息、工具调用请求和工具执行结果的转换。
      *
      * @param historyMessages 历史消息列表，包含当前会话的所有历史对话记录
-     * @return List<DeepSeekMessage> 构建完成的对话上下文，包含系统消息和历史对话
+     * @return List<LlmMessage> 构建完成的对话上下文，包含系统消息和历史对话
      */
-    private List<DeepSeekMessage> buildChatContext(List<Message> historyMessages) {
-        // 1. 将历史消息逐条转换为 DeepSeekMessage 格式
-        List<DeepSeekMessage> deepSeekMessages = new ArrayList<>(historyMessages.stream()
+    private List<LlmMessage> buildChatContext(List<Message> historyMessages) {
+        // 1. 将历史消息逐条转换为统一 LLM 消息格式。
+        List<LlmMessage> llmMessages = new ArrayList<>(historyMessages.stream()
                 .map(msg -> {
-                    DeepSeekMessage deepSeekMessage = new DeepSeekMessage();
-                    DeepSeekMessage.MessageRole role =
-                            DeepSeekMessage.MessageRole.fromValue(msg.getRole());
-                    deepSeekMessage.setRole(role);
+                    LlmMessage llmMessage = new LlmMessage();
+                    llmMessage.setRole(msg.getRole());
 
                     // 根据消息角色设置内容（TOOL 类型需要特殊处理空内容）
                     String content = msg.getContent();
-                    if (role == DeepSeekMessage.MessageRole.TOOL) {
-                        deepSeekMessage.setContent(content != null && !content.isEmpty() ?
+                    if ("tool".equals(msg.getRole())) {
+                        llmMessage.setContent(content != null && !content.isEmpty() ?
                                 content : "工具执行结果为空");
                     } else {
-                        deepSeekMessage.setContent((content == null || content.isEmpty()) ?
+                        llmMessage.setContent((content == null || content.isEmpty()) ?
                                 null : content);
                     }
 
                     // 解析并设置工具调用信息
                     if (msg.getToolCalls() != null && !msg.getToolCalls().isEmpty()) {
                         try {
-                            List<ToolCallDTO> toolCalls = objectMapper.readValue(
+                            List<LlmToolCall> toolCalls = objectMapper.readValue(
                                     msg.getToolCalls(),
-                                    new TypeReference<List<ToolCallDTO>>() {}
+                                    new TypeReference<List<LlmToolCall>>() {}
                             );
-                            deepSeekMessage.setToolCalls(toolCalls);
+                            llmMessage.setToolCalls(toolCalls);
                         } catch (Exception e) {
                             log.warn("[CHAT] 解析历史消息 tool_calls 失败 - messageId={}",
                                     msg.getMessageId(), e);
@@ -397,19 +392,16 @@ public class ChatServiceImpl implements ChatService {
 
                     // 设置工具调用 ID
                     if (msg.getToolCallId() != null && !msg.getToolCallId().isEmpty()) {
-                        deepSeekMessage.setToolCallId(msg.getToolCallId());
+                        llmMessage.setToolCallId(msg.getToolCallId());
                     }
 
-                    return deepSeekMessage;
+                    return llmMessage;
                 }).toList());
         
-        // 2. 在消息列表开头插入系统提示词
-        DeepSeekMessage systemMessage = new DeepSeekMessage();
-        systemMessage.setRole(DeepSeekMessage.MessageRole.SYSTEM);
-        systemMessage.setContent(deepSeekProperties.getSystemPrompt());
-        deepSeekMessages.add(0, systemMessage);
+        // 2. 在消息列表开头插入系统提示词。
+        llmMessages.add(0, LlmMessage.system(deepSeekProperties.getSystemPrompt()));
 
-        return deepSeekMessages;
+        return llmMessages;
     }
     
     /**
@@ -420,11 +412,11 @@ public class ChatServiceImpl implements ChatService {
      *
      * @param userId 当前用户 ID
      * @param request 聊天请求
-     * @param deepSeekMessages 当前对话上下文
+     * @param llmMessages 当前对话上下文
      */
     private void appendKnowledgeContextIfNeeded(Long userId,
                                                 SendMessageRequest request,
-                                                List<DeepSeekMessage> deepSeekMessages) {
+                                                List<LlmMessage> llmMessages) {
         // 1. 若未开启知识库增强，直接返回
         if (request.getEnableKnowledgeBase() == null || !request.getEnableKnowledgeBase()) {
             return;
@@ -452,12 +444,10 @@ public class ChatServiceImpl implements ChatService {
         }
 
         // 4. 构建知识库增强系统消息并插入到对话上下文中的合适位置
-        DeepSeekMessage knowledgeMessage = new DeepSeekMessage();
-        knowledgeMessage.setRole(DeepSeekMessage.MessageRole.SYSTEM);
-        knowledgeMessage.setContent(buildKnowledgeEnhancementPrompt(knowledgeContext));
+        LlmMessage knowledgeMessage = LlmMessage.system(buildKnowledgeEnhancementPrompt(knowledgeContext));
         
-        int insertIndex = deepSeekMessages.isEmpty() ? 0 : 1;
-        deepSeekMessages.add(insertIndex, knowledgeMessage);
+        int insertIndex = llmMessages.isEmpty() ? 0 : 1;
+        llmMessages.add(insertIndex, knowledgeMessage);
 
         log.info("[CHAT][KB_ENHANCE] 知识上下文注入完成 - userId={}, sessionId={}, insertIndex={}, contextLength={}",
                 userId, request.getSessionId(), insertIndex, knowledgeContext.length());
@@ -523,12 +513,12 @@ public class ChatServiceImpl implements ChatService {
 
         // 5. 查询历史消息并构建多轮对话上下文
         List<Message> historyMessages = loadHistoryMessages(request.getSessionId());
-        List<DeepSeekMessage> deepSeekMessages = buildChatContext(historyMessages);
+        List<LlmMessage> llmMessages = buildChatContext(historyMessages);
         
         // 6. 如显式启用知识库增强，则插入知识上下文
-        appendKnowledgeContextIfNeeded(userId, request, deepSeekMessages);
+        appendKnowledgeContextIfNeeded(userId, request, llmMessages);
         
-        return new ChatPrepareResult(session, userMessage, deepSeekMessages);
+        return new ChatPrepareResult(session, userMessage, llmMessages);
     }
     
 
@@ -540,13 +530,13 @@ public class ChatServiceImpl implements ChatService {
     private static class ChatPrepareResult {
         private final Session session;
         private final Message userMessage;
-        private final List<DeepSeekMessage> deepSeekMessages;
+        private final List<LlmMessage> llmMessages;
 
-        private ChatPrepareResult(Session session, Message userMessage, List<DeepSeekMessage>
-                deepSeekMessages) {
+        private ChatPrepareResult(Session session, Message userMessage, List<LlmMessage>
+                llmMessages) {
             this.session = session;
             this.userMessage = userMessage;
-            this.deepSeekMessages = deepSeekMessages;
+            this.llmMessages = llmMessages;
         }
     }
     
@@ -572,7 +562,7 @@ public class ChatServiceImpl implements ChatService {
         // 3. 获取会话信息、用户消息和对话上下文
         Session session = prepareResult.getSession();
         Message message = prepareResult.getUserMessage();
-        List<DeepSeekMessage> deepSeekMessages = prepareResult.getDeepSeekMessages();
+        List<LlmMessage> llmMessages = prepareResult.getLlmMessages();
 
         // 4. 将流式处理任务提交到线程池，避免阻塞主线程
         chatExecutor.submit(() -> {
@@ -580,7 +570,7 @@ public class ChatServiceImpl implements ChatService {
                 // 5. 调用 DeepSeek 流式接口，实时转发事件给前端
                 FunctionCallingService.StreamingChatResult result = functionCallingService.streamChatWithTools(
                         userId,
-                        deepSeekMessages,
+                        llmMessages,
                         event -> {
                             // 转发事件给前端
                             try {

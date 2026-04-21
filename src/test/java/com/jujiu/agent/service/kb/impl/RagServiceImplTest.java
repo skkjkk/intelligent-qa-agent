@@ -1,8 +1,9 @@
 package com.jujiu.agent.service.kb.impl;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.jujiu.agent.module.chat.infrastructure.deepseek.DeepSeekClient;
-import com.jujiu.agent.module.chat.infrastructure.deepseek.DeepSeekResult;
+import com.jujiu.agent.module.chat.infrastructure.llm.LlmClient;
+import com.jujiu.agent.module.chat.infrastructure.llm.LlmClientRouter;
+import com.jujiu.agent.module.chat.infrastructure.llm.LlmResult;
 import com.jujiu.agent.module.kb.application.service.impl.RagServiceImpl;
 import com.jujiu.agent.module.kb.application.model.ChunkSearchResult;
 import com.jujiu.agent.module.kb.infrastructure.config.KnowledgeBaseProperties;
@@ -43,7 +44,8 @@ import static org.mockito.Mockito.*;
 class RagServiceImplTest {
 
     private VectorSearchService vectorSearchService;
-    private DeepSeekClient deepSeekClient;
+    private LlmClientRouter llmClientRouter;
+    private LlmClient llmClient;
     private KnowledgeBaseProperties knowledgeBaseProperties;
     private ObjectMapper objectMapper;
     private ExecutorService chatExecutor;
@@ -55,7 +57,8 @@ class RagServiceImplTest {
     void setUp() {
         // 1. 初始化依赖 mock。
         vectorSearchService = mock(VectorSearchService.class);
-        deepSeekClient = mock(DeepSeekClient.class);
+        llmClientRouter = mock(LlmClientRouter.class);
+        llmClient = mock(LlmClient.class);
         knowledgeBaseProperties = new KnowledgeBaseProperties();
         objectMapper = new ObjectMapper();
         chatExecutor = mock(ExecutorService.class);
@@ -65,7 +68,7 @@ class RagServiceImplTest {
         // 2. 构造被测对象。
         ragService = new RagServiceImpl(
                 vectorSearchService,
-                deepSeekClient, 
+                llmClientRouter,
                 knowledgeBaseProperties,
                 objectMapper,
                 chatExecutor,
@@ -73,6 +76,9 @@ class RagServiceImplTest {
                 queryLogService
                 
         );
+
+        // 3. 默认使用 router 返回的 provider client。
+        when(llmClientRouter.getDefault()).thenReturn(llmClient);
     }
 
     @Test
@@ -122,7 +128,7 @@ class RagServiceImplTest {
                 .organize(rawResults, "这份文档讲了什么");
         verify(queryLogService, times(1))
                 .saveQueryLog(eq(1001L), eq(1L), eq(request), eq(5), isNull(), eq(List.of()), anyLong(), eq("EMPTY"), isNull());
-        verifyNoInteractions(deepSeekClient);
+        verifyNoInteractions(llmClient);
     }
 
     @Test
@@ -157,7 +163,7 @@ class RagServiceImplTest {
                 .search(1L, 1001L, "怎么接 ACL", 5);
         verify(retrievalResultOrganizer, times(1))
                 .organize(rawResults, "怎么接 ACL");
-        verifyNoInteractions(deepSeekClient);
+        verifyNoInteractions(llmClient);
     }
 
     @Test
@@ -204,22 +210,22 @@ class RagServiceImplTest {
                         .build());
 
         // 4. 准备模型返回。
-        DeepSeekResult deepSeekResult = new DeepSeekResult();
-        deepSeekResult.setReply("ACL 包括 READ、rebuildFailedIndexes 是做什么的、SHARE 三类权限。");
-        deepSeekResult.setPromptTokens(100);
-        deepSeekResult.setCompletionTokens(50);
-        deepSeekResult.setTotalTokens(150);
+        LlmResult llmResult = new LlmResult();
+        llmResult.setReply("ACL 包括 READ、rebuildFailedIndexes 是做什么的、SHARE 三类权限。");
+        llmResult.setPromptTokens(100);
+        llmResult.setCompletionTokens(50);
+        llmResult.setTotalTokens(150);
 
         KbQueryLog queryLog = new KbQueryLog();
         queryLog.setId(999L);
 
-        when(deepSeekClient.chat(anyList())).thenReturn(deepSeekResult);
+        when(llmClient.chat(anyList())).thenReturn(llmResult);
         when(queryLogService.saveQueryLog(
                 eq(1001L),
                 eq(1L),
                 eq(request),
                 eq(5),
-                eq(deepSeekResult),
+                eq(llmResult),
                 eq(citations),
                 anyLong(),
                 eq("SUCCESS"),
@@ -249,7 +255,7 @@ class RagServiceImplTest {
                 .search(1L, 1001L, "ACL 怎么做", 5);
         verify(retrievalResultOrganizer, times(1))
                 .organize(rawResults, "ACL 怎么做");
-        verify(deepSeekClient, times(1)).chat(anyList());
+        verify(llmClient, times(1)).chat(anyList());
         verify(queryLogService, times(1)).saveRetrievalTrace(999L, finalResults);
     }
 

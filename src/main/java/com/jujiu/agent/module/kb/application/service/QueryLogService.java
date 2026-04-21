@@ -1,6 +1,6 @@
 package com.jujiu.agent.module.kb.application.service;
 
-import com.jujiu.agent.module.chat.infrastructure.deepseek.DeepSeekResult;
+import com.jujiu.agent.module.chat.infrastructure.llm.LlmResult;
 import com.jujiu.agent.module.kb.application.model.ChunkSearchResult;
 import com.jujiu.agent.module.kb.api.request.QueryKnowledgeBaseRequest;
 import com.jujiu.agent.module.kb.api.response.CitationResponse;
@@ -27,7 +27,7 @@ public interface QueryLogService {
      * @param kbId 知识库 ID
      * @param request 原始请求
      * @param topK 检索数量
-     * @param deepSeekResult 模型调用结果
+     * @param llmResult 模型调用结果
      * @param citations 引用列表
      * @param latencyMs 总耗时
      * @param status 查询状态
@@ -38,7 +38,7 @@ public interface QueryLogService {
                             Long kbId,
                             QueryKnowledgeBaseRequest request,
                             Integer topK,
-                            DeepSeekResult deepSeekResult,
+                            LlmResult llmResult,
                             List<CitationResponse> citations,
                             long latencyMs,
                             String status,

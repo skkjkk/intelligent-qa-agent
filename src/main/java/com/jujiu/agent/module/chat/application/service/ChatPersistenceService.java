@@ -1,8 +1,8 @@
 package com.jujiu.agent.module.chat.application.service;
 
-import com.jujiu.agent.module.chat.infrastructure.deepseek.DeepSeekMessage;
 import com.jujiu.agent.module.chat.domain.entity.Message;
 import com.jujiu.agent.module.chat.domain.entity.Session;
+import com.jujiu.agent.module.chat.infrastructure.llm.LlmMessage;
 
 import java.util.List;
 
@@ -15,7 +15,7 @@ public interface ChatPersistenceService {
     
     Message saveAssistantMessage(String sessionId, String content, Integer tokens);
     
-    void saveIntermediateMessages(String sessionId, List<DeepSeekMessage> messagesToSave);
+    void saveIntermediateMessages(String sessionId, List<LlmMessage> messagesToSave);
 
     void updateSessionAfterReply(Session session, String finalReply, int messageIncrement);
 

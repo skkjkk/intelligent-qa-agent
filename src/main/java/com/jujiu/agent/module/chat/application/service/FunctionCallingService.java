@@ -1,7 +1,7 @@
 package com.jujiu.agent.module.chat.application.service;
 
-import com.jujiu.agent.module.chat.infrastructure.deepseek.DeepSeekResult;
-import com.jujiu.agent.module.chat.infrastructure.deepseek.DeepSeekMessage;
+import com.jujiu.agent.module.chat.infrastructure.llm.LlmMessage;
+import com.jujiu.agent.module.chat.infrastructure.llm.LlmResult;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
@@ -26,7 +26,7 @@ public interface FunctionCallingService {
      * @param messages 对话消息列表
      * @return AI的最终回复结果
      */
-    DeepSeekResult chatWithTools(Long userId, List<DeepSeekMessage> messages);
+    LlmResult chatWithTools(Long userId, List<LlmMessage> messages);
 
     /**
      * 带工具调用的流式对话
@@ -39,7 +39,7 @@ public interface FunctionCallingService {
      */
     StreamingChatResult streamChatWithTools(
             Long userId,
-            List<DeepSeekMessage> messages,
+            List<LlmMessage> messages,
             Consumer<StreamEvent> eventConsumer
     );
 
@@ -60,7 +60,7 @@ public interface FunctionCallingService {
         private int totalTokens;
 
         // 需要保存到数据库的消息列表（包括带 tool_calls 的 assistant 消息）
-        private List<DeepSeekMessage> messagesToSave;
+        private List<LlmMessage> messagesToSave;
     }
 
     @Data

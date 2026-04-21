@@ -2,13 +2,14 @@ package com.jujiu.agent.module.kb.application.service.impl;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.jujiu.agent.module.chat.infrastructure.deepseek.DeepSeekClient;
-import com.jujiu.agent.module.chat.infrastructure.deepseek.DeepSeekResult;
+import com.jujiu.agent.module.chat.infrastructure.llm.LlmClientRouter;
+import com.jujiu.agent.module.chat.infrastructure.llm.LlmMessage;
+import com.jujiu.agent.module.chat.infrastructure.llm.LlmResult;
+import com.jujiu.agent.module.chat.infrastructure.llm.LlmStreamEvent;
 import com.jujiu.agent.shared.exception.BusinessException;
 import com.jujiu.agent.module.kb.application.model.ChunkSearchResult;
 import com.jujiu.agent.shared.result.ResultCode;
 import com.jujiu.agent.module.kb.infrastructure.config.KnowledgeBaseProperties;
-import com.jujiu.agent.module.chat.infrastructure.deepseek.DeepSeekMessage;
 import com.jujiu.agent.module.kb.api.request.QueryKnowledgeBaseRequest;
 import com.jujiu.agent.module.kb.api.response.CitationResponse;
 import com.jujiu.agent.module.kb.api.response.KnowledgeQueryDebugResponse;
@@ -41,7 +42,7 @@ import java.util.concurrent.ExecutorService;
  *     <li>接收请求并兜底关键参数</li>
  *     <li>调用向量检索服务获取相关分块结果</li>
  *     <li>构造知识库上下文与引用列表</li>
- *     <li>调用 DeepSeekClient 生成答案（同步 / 流式）</li>
+ *     <li>调用统一 LLM Router 生成答案（同步 / 流式）</li>
  *     <li>封装引用结果、记录查询日志与检索轨迹</li>
  *     <li>处理零命中与异常等边界场景</li>
  * </ul>
@@ -72,8 +73,8 @@ public class RagServiceImpl implements RagService {
     /** 向量检索服务。 */
     private final VectorSearchService vectorSearchService;
 
-    /** DeepSeek 大模型客户端。 */
-    private final DeepSeekClient deepSeekClient;
+    /** LLM 客户端路由器。 */
+    private final LlmClientRouter llmClientRouter;
     
     /** 知识库配置属性。 */
     private final KnowledgeBaseProperties knowledgeBaseProperties;
@@ -94,21 +95,21 @@ public class RagServiceImpl implements RagService {
      * 构造 RAG 问答服务。
      *
      * @param vectorSearchService         向量检索服务
-     * @param deepSeekClient              DeepSeek 大模型客户端
+     * @param llmClientRouter             LLM 客户端路由器
      * @param knowledgeBaseProperties     知识库配置属性
      * @param objectMapper                JSON 序列化器
      * @param chatExecutor                流式问答异步执行器
      * @param queryLogService             查询日志服务
      */
     public RagServiceImpl(VectorSearchService vectorSearchService,
-                          DeepSeekClient deepSeekClient,
+                          LlmClientRouter llmClientRouter,
                           KnowledgeBaseProperties knowledgeBaseProperties,
                           ObjectMapper objectMapper,
                           ExecutorService chatExecutor,
                           RetrievalResultOrganizer retrievalResultOrganizer,
                           QueryLogService queryLogService) {
         this.vectorSearchService = vectorSearchService;
-        this.deepSeekClient = deepSeekClient;
+        this.llmClientRouter = llmClientRouter;
         this.knowledgeBaseProperties = knowledgeBaseProperties;
         this.objectMapper = objectMapper;
         this.chatExecutor = chatExecutor;
@@ -169,7 +170,7 @@ public class RagServiceImpl implements RagService {
         // 6. 从整理结果中统一读取 citations 和 context，避免各链路重复组装。
         List<CitationResponse> citations = organizedResult.getCitations();
         String context = organizedResult.getContext();
-        List<DeepSeekMessage> messages = buildPromptMessages(request.getQuestion(), context);
+        List<LlmMessage> messages = buildPromptMessages(request.getQuestion(), context);
 
         log.info("[KB][QUERY][ORGANIZE] 检索结果整理完成并准备调用模型 - kbId={}, userId={}, rawResultCount={}, finalResultCount={}, citationCount={}, contextLength={}",
                 kbId,
@@ -180,8 +181,8 @@ public class RagServiceImpl implements RagService {
                 context == null ? 0 : context.length()
         );
 
-        // 7. 调用 DeepSeek 生成答案
-        DeepSeekResult deepSeekResult = deepSeekClient.chat(messages);
+        // 7. 调用默认 LLM 生成答案。
+        LlmResult llmResult = llmClientRouter.getDefault().chat(messages);
 
         // 8. 计算耗时
         long latencyMs = System.currentTimeMillis() - startTime;
@@ -195,7 +196,7 @@ public class RagServiceImpl implements RagService {
                 kbId,
                 request,
                 topK,
-                deepSeekResult,
+                llmResult,
                 citations,
                 latencyMs,
                 DEFAULT_QUERY_STATUS_SUCCESS,
@@ -205,11 +206,11 @@ public class RagServiceImpl implements RagService {
 
         // 10. 封装并返回响应结果
         return KnowledgeQueryResponse.builder()
-                .answer(deepSeekResult.getReply())
+                .answer(llmResult.getReply())
                 .citations(citations)
-                .promptTokens(deepSeekResult.getPromptTokens())
-                .completionTokens(deepSeekResult.getCompletionTokens())
-                .totalTokens(deepSeekResult.getTotalTokens())
+                .promptTokens(llmResult.getPromptTokens())
+                .completionTokens(llmResult.getCompletionTokens())
+                .totalTokens(llmResult.getTotalTokens())
                 .latencyMs(latencyMs)
                 .build();
     }
@@ -396,7 +397,7 @@ public class RagServiceImpl implements RagService {
                 // 6. 从统一整理结果中获取 citations 与 context。
                 List<CitationResponse> citations = organizedResult.getCitations();
                 String context = organizedResult.getContext();
-                List<DeepSeekMessage> messages = buildPromptMessages(request.getQuestion(), context);
+                List<LlmMessage> messages = buildPromptMessages(request.getQuestion(), context);
 
                 log.info("[KB][QUERY][STREAM][ORGANIZE] 检索结果整理完成并准备流式调用模型 - kbId={}, userId={}, rawResultCount={}, finalResultCount={}, citationCount={}, contextLength={}",
                         kbId,
@@ -407,14 +408,19 @@ public class RagServiceImpl implements RagService {
                         context == null ? 0 : context.length()
                 );
 
-                // 7. 流式消费模型输出并按策略推送
+                // 7. 流式消费模型输出并按策略推送。
                 StringBuilder answerBuilder = new StringBuilder();
                 StringBuilder chunkBuffer = new StringBuilder();
                 int pushCount = 0;
 
-                for (String content : deepSeekClient.chatStream(messages).toIterable()) {
+                for (LlmStreamEvent event : llmClientRouter.getDefault().streamChat(messages).toIterable()) {
+                    if (event == null || event.getType() != LlmStreamEvent.Type.CONTENT) {
+                        continue;
+                    }
+
+                    String content = event.getContent();
                     if (content == null || content.isEmpty()) {
-                        return;
+                        continue;
                     }
 
                     answerBuilder.append(content);
@@ -534,17 +540,15 @@ public class RagServiceImpl implements RagService {
      *
      * @param question 用户问题
      * @param context 检索上下文
-     * @return DeepSeek 消息列表
+     * @return 统一 LLM 消息列表
      */
-    private List<DeepSeekMessage> buildPromptMessages(@NotBlank(message = "问题不能为空") 
-                                                      @Size(max = 2000, message = "问题长度不能超过2000字符") 
-                                                      String question, 
+    private List<LlmMessage> buildPromptMessages(@NotBlank(message = "问题不能为空")
+                                                 @Size(max = 2000, message = "问题长度不能超过2000字符")
+                                                 String question,
                                                       String context) {
         String prompt = buildPrompt(question, context);
-        DeepSeekMessage userMessage = new DeepSeekMessage();
-        userMessage.setRole(DeepSeekMessage.MessageRole.USER);
-        userMessage.setContent(prompt);
-        return List.of(userMessage);
+        // 统一使用 LLM 抽象消息，避免 RAG 链路继续依赖 DeepSeek DTO。
+        return List.of(LlmMessage.user(prompt));
     }
 
     /**

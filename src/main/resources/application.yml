@@ -18,6 +18,12 @@ springdoc:
     path: /swagger-ui.html
     tags-sorter: alpha
     operations-sorter: alpha
+
+llm:
+  default-provider: deepseek
+  providers:
+    deepseek:
+      enabled: true
     
 # 天气API公共配置
 amap:
